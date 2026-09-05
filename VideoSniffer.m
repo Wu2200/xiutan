@@ -16,9 +16,6 @@
 @implementation SnifferMediaModel
 @end
 
-@interface SnifferURLProtocol : NSURLProtocol
-@end
-
 @interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
 @end
 
@@ -52,21 +49,6 @@
 - (void)setupFloatingUI;
 - (void)clearMedia;
 - (void)registerNotifications;
-@end
-
-@implementation SnifferURLProtocol
-
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    if (request.URL) {
-        [[SnifferManager sharedManager] captureUrl:request.URL.absoluteString];
-    }
-    return NO;
-}
-
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
-    return request;
-}
-
 @end
 
 @implementation SnifferRootViewController
@@ -276,7 +258,7 @@
         clearBtn.frame = CGRectMake(frame.size.width - 94, 6, 40, 24);
         [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
         clearBtn.titleLabel.font = [UIFont systemFontOfSize:11];
-        [clearBtn setTitleColor:[UIColor colorWithRed:0.45 green:0.48 blue:0.52 alpha:1.0] forState:UIControlStateNormal];
+        clearBtn.setTitleColor:[UIColor colorWithRed:0.45 green:0.48 blue:0.52 alpha:1.0] forState:UIControlStateNormal];
         [clearBtn addTarget:self action:@selector(clearTap) forControlEvents:UIControlEventTouchUpInside];
         [header addSubview:clearBtn];
 
@@ -656,85 +638,37 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
-static void InjectSnifferProtocol(NSURLSessionConfiguration *config) {
-    if (!config) {
-        return;
-    }
-    NSMutableArray *protocols = [config.protocolClasses mutableCopy];
-    if (!protocols) {
-        protocols = [NSMutableArray array];
-    }
-    Class protoCls = [SnifferURLProtocol class];
-    if (![protocols containsObject:protoCls]) {
-        [protocols insertObject:protoCls atIndex:0];
-        config.protocolClasses = protocols;
-    }
-}
-
-@interface NSURLSessionConfiguration (SnifferHook)
+@interface NSURL (SnifferProbe)
 @end
 
-@implementation NSURLSessionConfiguration (SnifferHook)
+@implementation NSURL (SnifferProbe)
 
-+ (NSURLSessionConfiguration *)sniff_defaultSessionConfiguration {
-    NSURLSessionConfiguration *config = [self sniff_defaultSessionConfiguration];
-    InjectSnifferProtocol(config);
-    return config;
-}
-
-+ (NSURLSessionConfiguration *)sniff_ephemeralSessionConfiguration {
-    NSURLSessionConfiguration *config = [self sniff_ephemeralSessionConfiguration];
-    InjectSnifferProtocol(config);
-    return config;
-}
-
-@end
-
-@interface NSURLSession (SnifferHook)
-@end
-
-@implementation NSURLSession (SnifferHook)
-
-+ (NSURLSession *)sniff_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration {
-    if (configuration) {
-        InjectSnifferProtocol(configuration);
++ (instancetype)sniff_URLWithString:(NSString *)URLString {
+    if (URLString) {
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
-    return [self sniff_sessionWithConfiguration:configuration];
+    return [self sniff_URLWithString:URLString];
 }
 
-+ (NSURLSession *)sniff_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
-    if (configuration) {
-        InjectSnifferProtocol(configuration);
++ (instancetype)sniff_URLWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
+    if (URLString) {
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
-    return [self sniff_sessionWithConfiguration:configuration delegate:delegate delegateQueue:queue];
+    return [self sniff_URLWithString:URLString relativeToURL:baseURL];
 }
 
-@end
-
-@interface NSURLRequest (SnifferAll)
-@end
-
-@implementation NSURLRequest (SnifferAll)
-
-+ (instancetype)sniff_requestWithURL:(NSURL *)URL {
-    if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+- (instancetype)sniff_initWithString:(NSString *)URLString {
+    if (URLString) {
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
-    return [self sniff_requestWithURL:URL];
+    return [self sniff_initWithString:URLString];
 }
 
-- (instancetype)sniff_initWithURL:(NSURL *)URL {
-    if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+- (instancetype)sniff_initWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
+    if (URLString) {
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
-    return [self sniff_initWithURL:URL];
-}
-
-- (instancetype)sniff_initWithURL:(NSURL *)URL cachePolicy:(NSURLRequestCachePolicy)cachePolicy timeoutInterval:(NSTimeInterval)timeoutInterval {
-    if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
-    }
-    return [self sniff_initWithURL:URL cachePolicy:cachePolicy timeoutInterval:timeoutInterval];
+    return [self sniff_initWithString:URLString relativeToURL:baseURL];
 }
 
 @end
@@ -1026,26 +960,10 @@ static void HookThirdPartyClassMethod(NSString *className, SEL origSel, SEL dumm
 }
 
 __attribute__((constructor)) static void SnifferInit(void) {
-    [NSURLProtocol registerClass:[SnifferURLProtocol class]];
-
-    SwizzleClassMethod([NSURLSessionConfiguration class], @selector(defaultSessionConfiguration), @selector(sniff_defaultSessionConfiguration));
-    SwizzleClassMethod([NSURLSessionConfiguration class], @selector(ephemeralSessionConfiguration), @selector(sniff_ephemeralSessionConfiguration));
-    SwizzleClassMethod([NSURLSession class], @selector(sessionWithConfiguration:), @selector(sniff_sessionWithConfiguration:));
-    SwizzleClassMethod([NSURLSession class], @selector(sessionWithConfiguration:delegate:delegateQueue:), @selector(sniff_sessionWithConfiguration:delegate:delegateQueue:));
-
-    SwizzleClassMethod([NSURLRequest class], @selector(requestWithURL:), @selector(sniff_requestWithURL:));
-    SwizzleMethod([NSURLRequest class], @selector(initWithURL:), @selector(sniff_initWithURL:));
-    SwizzleMethod([NSURLRequest class], @selector(initWithURL:cachePolicy:timeoutInterval:), @selector(sniff_initWithURL:cachePolicy:timeoutInterval:));
-
-    Class browsingContextCls = NSClassFromString(@"WKBrowsingContextController");
-    SEL registerSchemeSel = NSSelectorFromString(@"registerSchemeForCustomProtocol:");
-    if (browsingContextCls && [browsingContextCls respondsToSelector:registerSchemeSel]) {
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [browsingContextCls performSelector:registerSchemeSel withObject:@"http"];
-        [browsingContextCls performSelector:registerSchemeSel withObject:@"https"];
-        #pragma clang diagnostic pop
-    }
+    SwizzleClassMethod([NSURL class], @selector(URLWithString:), @selector(sniff_URLWithString:));
+    SwizzleClassMethod([NSURL class], @selector(URLWithString:relativeToURL:), @selector(sniff_URLWithString:relativeToURL:));
+    SwizzleMethod([NSURL class], @selector(initWithString:), @selector(sniff_initWithString:));
+    SwizzleMethod([NSURL class], @selector(initWithString:relativeToURL:), @selector(sniff_initWithString:relativeToURL:));
 
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
     SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
