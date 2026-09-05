@@ -1,14 +1,3 @@
-### 核心修改总结
-
-1. **修复编译报错（语法错误）**：在 `SnifferMiniPanelView` 中修复了 `clearBtn` 设置标题颜色时漏写左方括号的语法错误（将 `clearBtn.setTitleColor:...` 修正为标准的 `[clearBtn setTitleColor:... forState:...]`）。
-2. **清理多余接口声明**：移除了 `@interface SnifferManager` 中残留但未使用的 `- (void)importFromClipboard;` 声明，消除未实现方法告警。
-3. **遵循输出规范**：本次仅提供发生代码修复的 `VideoSniffer.m` 全量完整代码，未修改的 `build.yml` 不予重复输出。
-
----
-
-### `VideoSniffer.m` 全量完整代码
-
-```objc
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #import <WebKit/WebKit.h>
@@ -1004,4 +993,3 @@ __attribute__((constructor)) static void SnifferInit(void) {
 
     [[SnifferManager sharedManager] registerNotifications];
 }
-```
