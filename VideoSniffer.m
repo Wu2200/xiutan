@@ -4,9 +4,12 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 
+@class SnifferOverlayWindow;
+@class SnifferScriptBridge;
+@class SnifferMiniPanelView;
+
 @interface SnifferMediaModel : NSObject
 @property (nonatomic, copy) NSString *url;
-@property (nonatomic, copy) NSString *title;
 @end
 
 @implementation SnifferMediaModel
@@ -18,7 +21,9 @@
 @interface SnifferMiniPanelView : UIView <UITableViewDelegate, UITableViewDataSource>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UILabel *emptyLabel;
-@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UIButton *mediaTabBtn;
+@property (nonatomic, strong) UIButton *allTabBtn;
+@property (nonatomic, assign) BOOL showAll;
 - (void)refreshList;
 @end
 
@@ -28,6 +33,25 @@
 @interface SnifferOverlayWindow : UIWindow
 @property (nonatomic, strong) SnifferMiniPanelView *panelView;
 @property (nonatomic, strong) UIButton *floatingButton;
+@end
+
+@interface SnifferManager : NSObject
+@property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *mediaList;
+@property (nonatomic, strong) NSMutableSet<NSString *> *mediaSet;
+@property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *allList;
+@property (nonatomic, strong) NSMutableSet<NSString *> *allSet;
+@property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
+@property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
++ (instancetype)sharedManager;
+- (void)captureUrl:(NSString *)urlStr;
+- (void)setupFloatingUI;
+- (void)clearMedia;
+- (void)registerNotifications;
+@end
+
+@interface SnifferManager ()
+- (BOOL)isMediaUrl:(NSString *)urlStr;
+- (void)updateBadgeAndPanel;
 @end
 
 @implementation SnifferRootViewController
@@ -80,26 +104,14 @@
 }
 @end
 
-@interface SnifferManager : NSObject
-@property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *mediaList;
-@property (nonatomic, strong) NSMutableSet<NSString *> *urlSet;
-@property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
-@property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
-+ (instancetype)sharedManager;
-- (void)addMediaUrl:(NSString *)urlStr;
-- (void)setupFloatingUI;
-- (void)clearMedia;
-- (void)registerNotifications;
-@end
-
 @implementation SnifferScriptBridge
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
     if ([message.body isKindOfClass:[NSString class]]) {
-        [[SnifferManager sharedManager] addMediaUrl:(NSString *)message.body];
+        [[SnifferManager sharedManager] captureUrl:(NSString *)message.body];
     } else if ([message.body isKindOfClass:[NSDictionary class]]) {
         NSString *url = message.body[@"url"];
         if (url) {
-            [[SnifferManager sharedManager] addMediaUrl:url];
+            [[SnifferManager sharedManager] captureUrl:url];
         }
     }
 }
@@ -184,7 +196,12 @@
 }
 
 - (void)updateWithModel:(SnifferMediaModel *)model index:(NSInteger)index {
-    self.titleLabel.text = [NSString stringWithFormat:@"资源 %ld", (long)(index + 1)];
+    NSURL *u = [NSURL URLWithString:model.url];
+    NSString *host = u.host;
+    if (host.length == 0) {
+        host = @"未知来源";
+    }
+    self.titleLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)(index + 1), host];
     self.urlLabel.text = model.url;
 }
 
@@ -216,11 +233,21 @@
         header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.4];
         [self addSubview:header];
 
-        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(14, 9, 140, 18)];
-        _titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        _titleLabel.textColor = [UIColor colorWithRed:0.18 green:0.2 blue:0.22 alpha:1.0];
-        _titleLabel.text = @"嗅探资源";
-        [header addSubview:_titleLabel];
+        _mediaTabBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        _mediaTabBtn.frame = CGRectMake(10, 5, 66, 26);
+        _mediaTabBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+        _mediaTabBtn.layer.cornerRadius = 13;
+        _mediaTabBtn.layer.masksToBounds = YES;
+        [_mediaTabBtn addTarget:self action:@selector(mediaTabTap) forControlEvents:UIControlEventTouchUpInside];
+        [header addSubview:_mediaTabBtn];
+
+        _allTabBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        _allTabBtn.frame = CGRectMake(82, 5, 66, 26);
+        _allTabBtn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBold];
+        _allTabBtn.layer.cornerRadius = 13;
+        _allTabBtn.layer.masksToBounds = YES;
+        [_allTabBtn addTarget:self action:@selector(allTabTap) forControlEvents:UIControlEventTouchUpInside];
+        [header addSubview:_allTabBtn];
 
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         closeBtn.frame = CGRectMake(frame.size.width - 48, 6, 40, 24);
@@ -251,12 +278,22 @@
         _emptyLabel.textAlignment = NSTextAlignmentCenter;
         _emptyLabel.textColor = [UIColor colorWithRed:0.5 green:0.52 blue:0.55 alpha:1.0];
         _emptyLabel.font = [UIFont systemFontOfSize:11];
-        _emptyLabel.text = @"暂无嗅探资源";
         [self addSubview:_emptyLabel];
 
+        _showAll = NO;
         [self refreshList];
     }
     return self;
+}
+
+- (void)mediaTabTap {
+    self.showAll = NO;
+    [self refreshList];
+}
+
+- (void)allTabTap {
+    self.showAll = YES;
+    [self refreshList];
 }
 
 - (void)closeTap {
@@ -269,19 +306,39 @@
 }
 
 - (void)refreshList {
-    BOOL empty = ([SnifferManager sharedManager].mediaList.count == 0);
+    SnifferManager *mgr = [SnifferManager sharedManager];
+    NSArray *data = self.showAll ? mgr.allList : mgr.mediaList;
+
+    [self.mediaTabBtn setTitle:[NSString stringWithFormat:@"媒体 %lu", (unsigned long)mgr.mediaList.count] forState:UIControlStateNormal];
+    [self.allTabBtn setTitle:[NSString stringWithFormat:@"全部 %lu", (unsigned long)mgr.allList.count] forState:UIControlStateNormal];
+
+    UIColor *activeBg = [UIColor colorWithRed:0.82 green:0.9 blue:0.99 alpha:1.0];
+    UIColor *activeText = [UIColor colorWithRed:0.08 green:0.4 blue:0.8 alpha:1.0];
+    UIColor *idleBg = [UIColor colorWithWhite:1.0 alpha:0.45];
+    UIColor *idleText = [UIColor colorWithRed:0.45 green:0.48 blue:0.52 alpha:1.0];
+
+    self.mediaTabBtn.backgroundColor = self.showAll ? idleBg : activeBg;
+    [self.mediaTabBtn setTitleColor:self.showAll ? idleText : activeText forState:UIControlStateNormal];
+    self.allTabBtn.backgroundColor = self.showAll ? activeBg : idleBg;
+    [self.allTabBtn setTitleColor:self.showAll ? activeText : idleText forState:UIControlStateNormal];
+
+    BOOL empty = (data.count == 0);
+    self.emptyLabel.text = self.showAll ? @"暂无任何请求记录" : @"暂无媒体资源";
     self.emptyLabel.hidden = !empty;
     self.tableView.hidden = empty;
     [self.tableView reloadData];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return [SnifferManager sharedManager].mediaList.count;
+    SnifferManager *mgr = [SnifferManager sharedManager];
+    return self.showAll ? mgr.allList.count : mgr.mediaList.count;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    SnifferManager *mgr = [SnifferManager sharedManager];
+    NSArray *data = self.showAll ? mgr.allList : mgr.mediaList;
     SnifferMiniCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell" forIndexPath:indexPath];
-    SnifferMediaModel *model = [SnifferManager sharedManager].mediaList[indexPath.row];
+    SnifferMediaModel *model = data[indexPath.row];
     [cell updateWithModel:model index:indexPath.row];
 
     cell.actionBlock = ^(NSString *actionName) {
@@ -321,7 +378,9 @@
     dispatch_once(&onceToken, ^{
         inst = [[SnifferManager alloc] init];
         inst.mediaList = [NSMutableArray array];
-        inst.urlSet = [NSMutableSet set];
+        inst.mediaSet = [NSMutableSet set];
+        inst.allList = [NSMutableArray array];
+        inst.allSet = [NSMutableSet set];
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
     });
     return inst;
@@ -344,60 +403,73 @@
     [self setupFloatingUI];
 }
 
-- (void)addMediaUrl:(NSString *)urlStr {
-    if (!urlStr || ![urlStr isKindOfClass:[NSString class]] || urlStr.length == 0) {
-        return;
-    }
-    if ([urlStr hasPrefix:@"blob:"] || [urlStr hasPrefix:@"data:"]) {
-        return;
-    }
-
+- (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
-    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
+    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf", @".json"];
     for (NSString *b in blackList) {
         if ([lower containsString:b]) {
-            return;
+            return NO;
         }
     }
-
-    BOOL isMedia = NO;
-    NSArray *keys = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".mpd", @".f4v", @".avi", @"m3u8?", @"mp4?", @"/playlist", @"/manifest", @"videoplayback", @"stream", @"video", @"live"];
+    NSArray *keys = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".mpd", @".f4v", @".avi", @".ts", @"m3u8?", @"mp4?", @"/playlist", @"/manifest", @"videoplayback", @"stream", @"video", @"live"];
     for (NSString *key in keys) {
         if ([lower containsString:key]) {
-            isMedia = YES;
-            break;
+            return YES;
         }
     }
-    if (!isMedia) {
+    return NO;
+}
+
+- (void)captureUrl:(NSString *)urlStr {
+    if (!urlStr || ![urlStr isKindOfClass:[NSString class]] || urlStr.length < 8) {
+        return;
+    }
+    if (![urlStr hasPrefix:@"http"]) {
         return;
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        if ([self.urlSet containsObject:urlStr]) {
-            return;
+        if (![self.allSet containsObject:urlStr]) {
+            [self.allSet addObject:urlStr];
+            SnifferMediaModel *m = [[SnifferMediaModel alloc] init];
+            m.url = urlStr;
+            [self.allList insertObject:m atIndex:0];
+            if (self.allList.count > 150) {
+                SnifferMediaModel *old = self.allList.lastObject;
+                if (old.url) {
+                    [self.allSet removeObject:old.url];
+                }
+                [self.allList removeLastObject];
+            }
         }
-        [self.urlSet addObject:urlStr];
 
-        SnifferMediaModel *model = [[SnifferMediaModel alloc] init];
-        model.url = urlStr;
-        [self.mediaList insertObject:model atIndex:0];
-
-        if (!self.overlayWindow) {
-            [self setupFloatingUI];
+        if ([self isMediaUrl:urlStr] && ![self.mediaSet containsObject:urlStr]) {
+            [self.mediaSet addObject:urlStr];
+            SnifferMediaModel *m = [[SnifferMediaModel alloc] init];
+            m.url = urlStr;
+            [self.mediaList insertObject:m atIndex:0];
         }
 
-        NSString *title = [NSString stringWithFormat:@"🎬 嗅探 %lu", (unsigned long)self.mediaList.count];
-        [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
-
-        if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
-            [self.overlayWindow.panelView refreshList];
-        }
+        [self updateBadgeAndPanel];
     });
+}
+
+- (void)updateBadgeAndPanel {
+    if (!self.overlayWindow) {
+        [self setupFloatingUI];
+    }
+    NSString *title = [NSString stringWithFormat:@"🎬 嗅探 %lu", (unsigned long)self.mediaList.count];
+    [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
+    if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
+        [self.overlayWindow.panelView refreshList];
+    }
 }
 
 - (void)clearMedia {
     [self.mediaList removeAllObjects];
-    [self.urlSet removeAllObjects];
+    [self.mediaSet removeAllObjects];
+    [self.allList removeAllObjects];
+    [self.allSet removeAllObjects];
     [self.overlayWindow.floatingButton setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
 }
 
@@ -448,10 +520,6 @@
             btn.layer.masksToBounds = YES;
             btn.layer.borderWidth = 0.5;
             btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
-            btn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.1].CGColor;
-            btn.layer.shadowOffset = CGSizeMake(0, 3);
-            btn.layer.shadowRadius = 6;
-            btn.layer.shadowOpacity = 1.0;
             btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
             [btn setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
             [btn setTitleColor:[UIColor colorWithRed:0.2 green:0.22 blue:0.25 alpha:1.0] forState:UIControlStateNormal];
@@ -573,6 +641,15 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
+static void CaptureAssetUrl(AVAsset *asset) {
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *url = ((AVURLAsset *)asset).URL;
+        if (url) {
+            [[SnifferManager sharedManager] captureUrl:url.absoluteString];
+        }
+    }
+}
+
 @interface NSURLRequest (Sniffer)
 @end
 
@@ -580,7 +657,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL cachePolicy:(NSURLRequestCachePolicy)cachePolicy timeoutInterval:(NSTimeInterval)timeoutInterval {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL cachePolicy:cachePolicy timeoutInterval:timeoutInterval];
 }
@@ -594,10 +671,10 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (void)sniff_resume {
     if (self.originalRequest.URL) {
-        [[SnifferManager sharedManager] addMediaUrl:self.originalRequest.URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:self.originalRequest.URL.absoluteString];
     }
     if (self.currentRequest.URL) {
-        [[SnifferManager sharedManager] addMediaUrl:self.currentRequest.URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:self.currentRequest.URL.absoluteString];
     }
     [self sniff_resume];
 }
@@ -613,18 +690,25 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     if (configuration) {
         NSString *jsCode = @"(function(){\
             function postUrl(u){\
-                if(!u||typeof u!=='string'||u.indexOf('blob:')===0||u.indexOf('data:')===0)return;\
-                var l=u.toLowerCase();\
-                if(l.indexOf('.m3u8')!==-1||l.indexOf('.mp4')!==-1||l.indexOf('.flv')!==-1||l.indexOf('.mov')!==-1||l.indexOf('.mkv')!==-1||l.indexOf('.mpd')!==-1||l.indexOf('m3u8')!==-1||l.indexOf('playlist')!==-1||l.indexOf('stream')!==-1){\
-                    try{window.webkit.messageHandlers.SnifferBridge.postMessage(u);}catch(e){}\
-                }\
+                try{\
+                    if(!u||typeof u!=='string')return;\
+                    if(u.indexOf('blob:')===0||u.indexOf('data:')===0)return;\
+                    var abs=u;\
+                    try{abs=new URL(u,location.href).href;}catch(e){}\
+                    var l=abs.toLowerCase();\
+                    if(l.indexOf('.m3u8')!==-1||l.indexOf('.mp4')!==-1||l.indexOf('.flv')!==-1||l.indexOf('.mov')!==-1||l.indexOf('.mkv')!==-1||l.indexOf('.mpd')!==-1||l.indexOf('m3u8')!==-1||l.indexOf('playlist')!==-1||l.indexOf('stream')!==-1||l.indexOf('videoplayback')!==-1){\
+                        try{window.webkit.messageHandlers.SnifferBridge.postMessage(abs);}catch(e){}\
+                    }\
+                }catch(e){}\
             }\
             function check(){\
-                var els=document.querySelectorAll('video, audio, source');\
-                for(var i=0;i<els.length;i++){\
-                    if(els[i].src)postUrl(els[i].src);\
-                    if(els[i].currentSrc)postUrl(els[i].currentSrc);\
-                }\
+                try{\
+                    var els=document.querySelectorAll('video, audio, source');\
+                    for(var i=0;i<els.length;i++){\
+                        if(els[i].src)postUrl(els[i].src);\
+                        if(els[i].currentSrc)postUrl(els[i].currentSrc);\
+                    }\
+                }catch(e){}\
             }\
             check();\
             setInterval(check,1000);\
@@ -636,20 +720,26 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
             if(window.fetch){\
                 var origFetch=window.fetch;\
                 window.fetch=function(input,init){\
-                    if(typeof input==='string'){postUrl(input);}\
-                    else if(input&&input.url){postUrl(input.url);}\
+                    try{\
+                        if(typeof input==='string'){postUrl(input);}\
+                        else if(input&&input.url){postUrl(input.url);}\
+                    }catch(e){}\
                     return origFetch.apply(this,arguments);\
                 };\
             }\
-            var origPlay=HTMLMediaElement.prototype.play;\
-            HTMLMediaElement.prototype.play=function(){\
-                if(this.src)postUrl(this.src);\
-                if(this.currentSrc)postUrl(this.currentSrc);\
-                return origPlay.apply(this,arguments);\
-            };\
+            if(window.HTMLMediaElement&&HTMLMediaElement.prototype.play){\
+                var origPlay=HTMLMediaElement.prototype.play;\
+                HTMLMediaElement.prototype.play=function(){\
+                    try{\
+                        if(this.src)postUrl(this.src);\
+                        if(this.currentSrc)postUrl(this.currentSrc);\
+                    }catch(e){}\
+                    return origPlay.apply(this,arguments);\
+                };\
+            }\
         })();";
 
-        WKUserScript *script = [[WKUserScript alloc] initWithSource:jsCode injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:NO];
+        WKUserScript *script = [[WKUserScript alloc] initWithSource:jsCode injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:NO];
         [configuration.userContentController addUserScript:script];
 
         @try {
@@ -661,9 +751,23 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (WKNavigation *)sniff_loadRequest:(NSURLRequest *)request {
     if (request.URL) {
-        [[SnifferManager sharedManager] addMediaUrl:request.URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:request.URL.absoluteString];
     }
     return [self sniff_loadRequest:request];
+}
+
+@end
+
+@interface AVAsset (Sniffer)
+@end
+
+@implementation AVAsset (Sniffer)
+
++ (instancetype)sniff_assetWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_assetWithURL:URL];
 }
 
 @end
@@ -675,24 +779,35 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_playerWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_playerWithURL:URL];
 }
 
++ (instancetype)sniff_playerWithPlayerItem:(AVPlayerItem *)item {
+    if (item) {
+        CaptureAssetUrl(item.asset);
+    }
+    return [self sniff_playerWithPlayerItem:item];
+}
+
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL];
 }
 
+- (instancetype)sniff_initWithPlayerItem:(AVPlayerItem *)item {
+    if (item) {
+        CaptureAssetUrl(item.asset);
+    }
+    return [self sniff_initWithPlayerItem:item];
+}
+
 - (void)sniff_replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
-    if ([item.asset isKindOfClass:[AVURLAsset class]]) {
-        NSURL *url = ((AVURLAsset *)item.asset).URL;
-        if (url) {
-            [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
-        }
+    if (item) {
+        CaptureAssetUrl(item.asset);
     }
     [self sniff_replaceCurrentItemWithPlayerItem:item];
 }
@@ -706,36 +821,36 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_playerItemWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_playerItemWithURL:URL];
 }
 
 + (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset {
-    if ([asset isKindOfClass:[AVURLAsset class]]) {
-        NSURL *url = ((AVURLAsset *)asset).URL;
-        if (url) {
-            [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
-        }
-    }
+    CaptureAssetUrl(asset);
     return [self sniff_playerItemWithAsset:asset];
+}
+
++ (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys {
+    CaptureAssetUrl(asset);
+    return [self sniff_playerItemWithAsset:asset automaticallyLoadedAssetKeys:automaticallyLoadedAssetKeys];
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL];
 }
 
 - (instancetype)sniff_initWithAsset:(AVAsset *)asset {
-    if ([asset isKindOfClass:[AVURLAsset class]]) {
-        NSURL *url = ((AVURLAsset *)asset).URL;
-        if (url) {
-            [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
-        }
-    }
+    CaptureAssetUrl(asset);
     return [self sniff_initWithAsset:asset];
+}
+
+- (instancetype)sniff_initWithAsset:(AVAsset *)asset automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys {
+    CaptureAssetUrl(asset);
+    return [self sniff_initWithAsset:asset automaticallyLoadedAssetKeys:automaticallyLoadedAssetKeys];
 }
 
 @end
@@ -747,40 +862,118 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_URLAssetWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_URLAssetWithURL:URL options:options];
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
     if (URL) {
-        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL options:options];
 }
 
 @end
 
-@interface IJKMoviePlayerSniffer : NSObject
+@interface ThirdPartySniffer : NSObject
 @end
 
-@implementation IJKMoviePlayerSniffer
+@implementation ThirdPartySniffer
 
-- (instancetype)sniff_initWithContentURL:(NSURL *)aUrl {
+- (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl {
     if (aUrl) {
-        [[SnifferManager sharedManager] addMediaUrl:aUrl.absoluteString];
+        [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString];
     }
-    return [self sniff_initWithContentURL:aUrl];
+    return [self sniff_ijk_initWithContentURL:aUrl];
 }
 
-- (instancetype)sniff_initWithContentURLString:(NSString *)aUrlStr {
+- (instancetype)sniff_ijk_initWithContentURLString:(NSString *)aUrlStr {
     if (aUrlStr) {
-        [[SnifferManager sharedManager] addMediaUrl:aUrlStr];
+        [[SnifferManager sharedManager] captureUrl:aUrlStr];
     }
-    return [self sniff_initWithContentURLString:aUrlStr];
+    return [self sniff_ijk_initWithContentURLString:aUrlStr];
+}
+
+- (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl withOptions:(id)options {
+    if (aUrl) {
+        [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString];
+    }
+    return [self sniff_ijk_initWithContentURL:aUrl withOptions:options];
+}
+
+- (instancetype)sniff_ijk_initWithContentURLString:(NSString *)aUrlStr withOptions:(id)options {
+    if (aUrlStr) {
+        [[SnifferManager sharedManager] captureUrl:aUrlStr];
+    }
+    return [self sniff_ijk_initWithContentURLString:aUrlStr withOptions:options];
+}
+
+- (void)sniff_ali_setUrl:(NSString *)url {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    [self sniff_ali_setUrl:url];
+}
+
+- (int)sniff_txvod_startPlay:(NSString *)url {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    return [self sniff_txvod_startPlay:url];
+}
+
+- (int)sniff_txvod_startVodPlay:(NSString *)url {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    return [self sniff_txvod_startVodPlay:url];
+}
+
+- (int)sniff_txlive_startPlay:(NSString *)url type:(int)playType {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    return [self sniff_txlive_startPlay:url type:playType];
+}
+
++ (instancetype)sniff_pl_playerWithURL:(NSURL *)URL option:(id)option {
+    if (URL) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_pl_playerWithURL:URL option:option];
 }
 
 @end
+
+static void HookThirdParty(NSString *className, SEL origSel, SEL dummySel) {
+    Class cls = NSClassFromString(className);
+    if (!cls) {
+        return;
+    }
+    Method dummy = class_getInstanceMethod([ThirdPartySniffer class], dummySel);
+    Method orig = class_getInstanceMethod(cls, origSel);
+    if (!dummy || !orig) {
+        return;
+    }
+    class_addMethod(cls, dummySel, method_getImplementation(dummy), method_getTypeEncoding(dummy));
+    SwizzleMethod(cls, origSel, dummySel);
+}
+
+static void HookThirdPartyClassMethod(NSString *className, SEL origSel, SEL dummySel) {
+    Class cls = NSClassFromString(className);
+    if (!cls) {
+        return;
+    }
+    Method dummy = class_getClassMethod([ThirdPartySniffer class], dummySel);
+    Method orig = class_getClassMethod(cls, origSel);
+    if (!dummy || !orig) {
+        return;
+    }
+    Class metaClass = object_getClass((id)cls);
+    class_addMethod(metaClass, dummySel, method_getImplementation(dummy), method_getTypeEncoding(dummy));
+    SwizzleClassMethod(cls, origSel, dummySel);
+}
 
 __attribute__((constructor)) static void SnifferInit(void) {
     SwizzleMethod([NSURLRequest class], @selector(initWithURL:cachePolicy:timeoutInterval:), @selector(sniff_initWithURL:cachePolicy:timeoutInterval:));
@@ -794,33 +987,33 @@ __attribute__((constructor)) static void SnifferInit(void) {
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
     SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
 
+    SwizzleClassMethod([AVAsset class], @selector(assetWithURL:), @selector(sniff_assetWithURL:));
+
     SwizzleClassMethod([AVPlayer class], @selector(playerWithURL:), @selector(sniff_playerWithURL:));
+    SwizzleClassMethod([AVPlayer class], @selector(playerWithPlayerItem:), @selector(sniff_playerWithPlayerItem:));
     SwizzleMethod([AVPlayer class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+    SwizzleMethod([AVPlayer class], @selector(initWithPlayerItem:), @selector(sniff_initWithPlayerItem:));
     SwizzleMethod([AVPlayer class], @selector(replaceCurrentItemWithPlayerItem:), @selector(sniff_replaceCurrentItemWithPlayerItem:));
 
     SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithURL:), @selector(sniff_playerItemWithURL:));
     SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:), @selector(sniff_playerItemWithAsset:));
+    SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:automaticallyLoadedAssetKeys:), @selector(sniff_playerItemWithAsset:automaticallyLoadedAssetKeys:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:), @selector(sniff_initWithAsset:));
+    SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:automaticallyLoadedAssetKeys:), @selector(sniff_initWithAsset:automaticallyLoadedAssetKeys:));
 
     SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
     SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
 
-    Class ijkCls = NSClassFromString(@"IJKFFMoviePlayerController");
-    if (ijkCls) {
-        Method m1 = class_getInstanceMethod(ijkCls, @selector(initWithContentURL:));
-        Method s1 = class_getInstanceMethod([IJKMoviePlayerSniffer class], @selector(sniff_initWithContentURL:));
-        if (m1 && s1) {
-            class_addMethod(ijkCls, @selector(sniff_initWithContentURL:), method_getImplementation(s1), method_getTypeEncoding(s1));
-            SwizzleMethod(ijkCls, @selector(initWithContentURL:), @selector(sniff_initWithContentURL:));
-        }
-        Method m2 = class_getInstanceMethod(ijkCls, @selector(initWithContentURLString:));
-        Method s2 = class_getInstanceMethod([IJKMoviePlayerSniffer class], @selector(sniff_initWithContentURLString:));
-        if (m2 && s2) {
-            class_addMethod(ijkCls, @selector(sniff_initWithContentURLString:), method_getImplementation(s2), method_getTypeEncoding(s2));
-            SwizzleMethod(ijkCls, @selector(initWithContentURLString:), @selector(sniff_initWithContentURLString:));
-        }
-    }
+    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURL:), @selector(sniff_ijk_initWithContentURL:));
+    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURLString:), @selector(sniff_ijk_initWithContentURLString:));
+    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURL:withOptions:), @selector(sniff_ijk_initWithContentURL:withOptions:));
+    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURLString:withOptions:), @selector(sniff_ijk_initWithContentURLString:withOptions:));
+    HookThirdParty(@"AliPlayer", @selector(setUrl:), @selector(sniff_ali_setUrl:));
+    HookThirdParty(@"TXVodPlayer", @selector(startPlay:), @selector(sniff_txvod_startPlay:));
+    HookThirdParty(@"TXVodPlayer", @selector(startVodPlay:), @selector(sniff_txvod_startVodPlay:));
+    HookThirdParty(@"TXLivePlayer", @selector(startPlay:type:), @selector(sniff_txlive_startPlay:type:));
+    HookThirdPartyClassMethod(@"PLPlayer", @selector(playerWithURL:option:), @selector(sniff_pl_playerWithURL:option:));
 
     [[SnifferManager sharedManager] registerNotifications];
 }
