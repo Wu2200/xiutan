@@ -6,49 +6,27 @@
 
 @class SnifferOverlayWindow;
 @class SnifferScriptBridge;
-@class SnifferMiniPanelView;
-
-@interface SnifferMediaModel : NSObject
-@property (nonatomic, copy) NSString *url;
-@property (nonatomic, copy) NSString *title;
-@property (nonatomic, assign) BOOL isMedia;
-@end
-
-@implementation SnifferMediaModel
-@end
-
-@interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
-@end
-
-@interface SnifferMiniPanelView : UIView <UITableViewDelegate, UITableViewDataSource>
-@property (nonatomic, strong) UITableView *tableView;
-@property (nonatomic, strong) UILabel *emptyLabel;
-@property (nonatomic, strong) UIButton *mediaTabBtn;
-@property (nonatomic, strong) UIButton *allTabBtn;
-@property (nonatomic, assign) BOOL showAll;
-- (void)refreshList;
-@end
 
 @interface SnifferRootViewController : UIViewController
 @end
 
 @interface SnifferOverlayWindow : UIWindow
-@property (nonatomic, strong) SnifferMiniPanelView *panelView;
-@property (nonatomic, strong) UIButton *floatingButton;
+@property (nonatomic, strong) UIView *buttonsContainer;
 @property (nonatomic, assign) BOOL isSuspendedHidden;
 @end
 
+@interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
+@end
+
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
-@property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *mediaList;
-@property (nonatomic, strong) NSMutableSet<NSString *> *mediaSet;
-@property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *allList;
-@property (nonatomic, strong) NSMutableSet<NSString *> *allSet;
+@property (nonatomic, copy) NSString *latestMediaUrl;
 @property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, weak) UIViewController *lastActiveVC;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
+@property (nonatomic, strong) NSArray<UIButton *> *playerButtons;
 + (instancetype)sharedManager;
-- (void)captureUrl:(NSString *)urlStr customTitle:(NSString *)customTitle;
+- (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
 - (void)clearMedia;
 - (void)registerNotifications;
@@ -67,16 +45,13 @@
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         SnifferOverlayWindow *win = (SnifferOverlayWindow *)self.view.window;
         if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
-            UIButton *btn = win.floatingButton;
-            if (btn) {
-                CGFloat btnW = btn.frame.size.width;
-                CGFloat btnH = btn.frame.size.height;
-                CGFloat safeX = MIN(MAX(btn.frame.origin.x, 12), size.width - btnW - 12);
-                CGFloat safeY = MIN(MAX(btn.frame.origin.y, 40), size.height - btnH - 40);
-                btn.frame = CGRectMake(safeX, safeY, btnW, btnH);
-            }
-            if (win.panelView && !win.panelView.hidden) {
-                win.panelView.hidden = YES;
+            UIView *container = win.buttonsContainer;
+            if (container) {
+                CGFloat w = container.frame.size.width;
+                CGFloat h = container.frame.size.height;
+                CGFloat safeX = size.width - w - 10;
+                CGFloat safeY = MIN(MAX(container.frame.origin.y, 40), size.height - h - 40);
+                container.frame = CGRectMake(safeX, safeY, w, h);
             }
         }
     } completion:nil];
@@ -85,23 +60,11 @@
 
 @implementation SnifferOverlayWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.isSuspendedHidden) {
+    if (self.isSuspendedHidden || !self.buttonsContainer || self.buttonsContainer.hidden || self.buttonsContainer.alpha < 0.05) {
         return nil;
     }
-    if (self.panelView && !self.panelView.hidden) {
-        CGPoint panelPoint = [self convertPoint:point toView:self.panelView];
-        if ([self.panelView pointInside:panelPoint withEvent:event]) {
-            return [super hitTest:point withEvent:event];
-        }
-        CGPoint btnPoint = [self convertPoint:point toView:self.floatingButton];
-        if ([self.floatingButton pointInside:btnPoint withEvent:event]) {
-            return [super hitTest:point withEvent:event];
-        }
-        self.panelView.hidden = YES;
-        return nil;
-    }
-    CGPoint btnPoint = [self convertPoint:point toView:self.floatingButton];
-    if ([self.floatingButton pointInside:btnPoint withEvent:event]) {
+    CGPoint containerPoint = [self convertPoint:point toView:self.buttonsContainer];
+    if ([self.buttonsContainer pointInside:containerPoint withEvent:event]) {
         return [super hitTest:point withEvent:event];
     }
     return nil;
@@ -112,326 +75,13 @@
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
     if ([message.body isKindOfClass:[NSDictionary class]]) {
         NSString *url = message.body[@"url"];
-        NSString *title = message.body[@"title"];
         if (url) {
-            [[SnifferManager sharedManager] captureUrl:url customTitle:title];
+            [[SnifferManager sharedManager] captureUrl:url];
         }
     } else if ([message.body isKindOfClass:[NSString class]]) {
-        [[SnifferManager sharedManager] captureUrl:(NSString *)message.body customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:(NSString *)message.body];
     }
 }
-@end
-
-@interface SnifferMiniCell : UITableViewCell
-@property (nonatomic, strong) UILabel *titleLabel;
-@property (nonatomic, strong) UILabel *urlLabel;
-@property (nonatomic, strong) UIScrollView *btnScrollView;
-@property (nonatomic, strong) UIStackView *btnStack;
-@property (nonatomic, copy) void (^actionBlock)(NSString *name);
-- (void)updateWithModel:(SnifferMediaModel *)model index:(NSInteger)index;
-@end
-
-@implementation SnifferMiniCell
-
-- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
-    self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
-    if (self) {
-        self.backgroundColor = [UIColor clearColor];
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
-
-        _titleLabel = [[UILabel alloc] init];
-        _titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        _titleLabel.font = [UIFont boldSystemFontOfSize:13];
-        _titleLabel.textColor = [UIColor colorWithRed:0.18 green:0.2 blue:0.24 alpha:1.0];
-
-        _urlLabel = [[UILabel alloc] init];
-        _urlLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        _urlLabel.font = [UIFont systemFontOfSize:10];
-        _urlLabel.textColor = [UIColor colorWithRed:0.5 green:0.53 blue:0.58 alpha:1.0];
-        _urlLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
-
-        _btnScrollView = [[UIScrollView alloc] init];
-        _btnScrollView.translatesAutoresizingMaskIntoConstraints = NO;
-        _btnScrollView.showsHorizontalScrollIndicator = NO;
-        _btnScrollView.bounces = NO;
-
-        _btnStack = [[UIStackView alloc] init];
-        _btnStack.translatesAutoresizingMaskIntoConstraints = NO;
-        _btnStack.axis = UILayoutConstraintAxisHorizontal;
-        _btnStack.spacing = 8;
-        _btnStack.alignment = UIStackViewAlignmentCenter;
-
-        [_btnScrollView addSubview:_btnStack];
-        [self.contentView addSubview:_titleLabel];
-        [self.contentView addSubview:_urlLabel];
-        [self.contentView addSubview:_btnScrollView];
-
-        [NSLayoutConstraint activateConstraints:@[
-            [_titleLabel.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:8],
-            [_titleLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:14],
-            [_titleLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
-
-            [_urlLabel.topAnchor constraintEqualToAnchor:_titleLabel.bottomAnchor constant:3],
-            [_urlLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:14],
-            [_urlLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
-
-            [_btnScrollView.topAnchor constraintEqualToAnchor:_urlLabel.bottomAnchor constant:8],
-            [_btnScrollView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:14],
-            [_btnScrollView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-14],
-            [_btnScrollView.heightAnchor constraintEqualToConstant:28],
-            [_btnScrollView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-8],
-
-            [_btnStack.topAnchor constraintEqualToAnchor:_btnScrollView.topAnchor],
-            [_btnStack.bottomAnchor constraintEqualToAnchor:_btnScrollView.bottomAnchor],
-            [_btnStack.leadingAnchor constraintEqualToAnchor:_btnScrollView.leadingAnchor],
-            [_btnStack.trailingAnchor constraintEqualToAnchor:_btnScrollView.trailingAnchor],
-            [_btnStack.heightAnchor constraintEqualToAnchor:_btnScrollView.heightAnchor]
-        ]];
-
-        NSArray *names = @[@"复制", @"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
-        for (NSString *name in names) {
-            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-            [btn setTitle:name forState:UIControlStateNormal];
-            btn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-            btn.layer.cornerRadius = 6;
-            btn.layer.masksToBounds = YES;
-            btn.contentEdgeInsets = UIEdgeInsetsMake(4, 10, 4, 10);
-
-            if ([name isEqualToString:@"复制"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.9 green:0.91 blue:0.93 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.2 green:0.22 blue:0.25 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([name isEqualToString:@"Forward"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.86 green:0.93 blue:0.98 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.06 green:0.42 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([name isEqualToString:@"Fileball"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.87 green:0.94 blue:0.88 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.12 green:0.5 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([name isEqualToString:@"Infuse"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.93 green:0.87 blue:0.95 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.48 green:0.16 blue:0.6 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([name isEqualToString:@"SenPlayer"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.89 green:0.9 blue:0.97 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.25 green:0.32 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
-            }
-
-            [btn addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
-            [btn addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
-            [btn addTarget:self action:@selector(btnTap:) forControlEvents:UIControlEventTouchUpInside];
-            [_btnStack addArrangedSubview:btn];
-        }
-    }
-    return self;
-}
-
-- (void)btnTouchDown:(UIButton *)btn {
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-    [feedback impactOccurred];
-    [UIView animateWithDuration:0.1 animations:^{
-        btn.transform = CGAffineTransformMakeScale(0.93, 0.93);
-    }];
-}
-
-- (void)btnTouchUp:(UIButton *)btn {
-    [UIView animateWithDuration:0.1 animations:^{
-        btn.transform = CGAffineTransformIdentity;
-    }];
-}
-
-- (void)btnTap:(UIButton *)btn {
-    if (self.actionBlock) {
-        self.actionBlock(btn.currentTitle);
-    }
-}
-
-- (void)updateWithModel:(SnifferMediaModel *)model index:(NSInteger)index {
-    if (model.title && model.title.length > 0) {
-        self.titleLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)(index + 1), model.title];
-    } else {
-        NSURL *u = [NSURL URLWithString:model.url];
-        NSString *host = u.host;
-        if (host.length == 0) {
-            host = @"未知来源";
-        }
-        self.titleLabel.text = [NSString stringWithFormat:@"%ld. %@", (long)(index + 1), host];
-    }
-    self.urlLabel.text = model.url;
-}
-
-@end
-
-@implementation SnifferMiniPanelView
-
-- (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
-    if (self) {
-        self.backgroundColor = [UIColor clearColor];
-        self.layer.cornerRadius = 18;
-        self.layer.masksToBounds = YES;
-        self.layer.borderWidth = 0.5;
-        self.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.9].CGColor;
-
-        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight];
-        UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
-        blurView.frame = self.bounds;
-        blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [self addSubview:blurView];
-
-        UIView *tintOverlay = [[UIView alloc] initWithFrame:self.bounds];
-        tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.96 alpha:0.82];
-        [self addSubview:tintOverlay];
-
-        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 42)];
-        header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.35];
-        [self addSubview:header];
-
-        _mediaTabBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        _mediaTabBtn.frame = CGRectMake(12, 7, 72, 28);
-        _mediaTabBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-        _mediaTabBtn.layer.cornerRadius = 14;
-        _mediaTabBtn.layer.masksToBounds = YES;
-        [_mediaTabBtn addTarget:self action:@selector(mediaTabTap) forControlEvents:UIControlEventTouchUpInside];
-        [header addSubview:_mediaTabBtn];
-
-        _allTabBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        _allTabBtn.frame = CGRectMake(90, 7, 72, 28);
-        _allTabBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-        _allTabBtn.layer.cornerRadius = 14;
-        _allTabBtn.layer.masksToBounds = YES;
-        [_allTabBtn addTarget:self action:@selector(allTabTap) forControlEvents:UIControlEventTouchUpInside];
-        [header addSubview:_allTabBtn];
-
-        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        closeBtn.frame = CGRectMake(frame.size.width - 48, 7, 40, 28);
-        [closeBtn setTitle:@"关闭" forState:UIControlStateNormal];
-        closeBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-        [closeBtn setTitleColor:[UIColor colorWithRed:0.42 green:0.45 blue:0.5 alpha:1.0] forState:UIControlStateNormal];
-        [closeBtn addTarget:self action:@selector(closeTap) forControlEvents:UIControlEventTouchUpInside];
-        [header addSubview:closeBtn];
-
-        UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        clearBtn.frame = CGRectMake(frame.size.width - 96, 7, 44, 28);
-        [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
-        clearBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-        [clearBtn setTitleColor:[UIColor colorWithRed:0.42 green:0.45 blue:0.5 alpha:1.0] forState:UIControlStateNormal];
-        [clearBtn addTarget:self action:@selector(clearTap) forControlEvents:UIControlEventTouchUpInside];
-        [header addSubview:clearBtn];
-
-        _tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 42, frame.size.width, frame.size.height - 42) style:UITableViewStylePlain];
-        _tableView.backgroundColor = [UIColor clearColor];
-        _tableView.separatorColor = [UIColor colorWithWhite:0.0 alpha:0.06];
-        _tableView.delegate = self;
-        _tableView.dataSource = self;
-        _tableView.estimatedRowHeight = 80;
-        _tableView.rowHeight = UITableViewAutomaticDimension;
-        _tableView.bounces = NO;
-        _tableView.alwaysBounceVertical = NO;
-        _tableView.decelerationRate = UIScrollViewDecelerationRateFast;
-        [_tableView registerClass:[SnifferMiniCell class] forCellReuseIdentifier:@"Cell"];
-        [self addSubview:_tableView];
-
-        _emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 100, frame.size.width, 40)];
-        _emptyLabel.textAlignment = NSTextAlignmentCenter;
-        _emptyLabel.textColor = [UIColor colorWithRed:0.5 green:0.53 blue:0.56 alpha:1.0];
-        _emptyLabel.font = [UIFont systemFontOfSize:12];
-        [self addSubview:_emptyLabel];
-
-        _showAll = NO;
-        [self refreshList];
-    }
-    return self;
-}
-
-- (void)mediaTabTap {
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-    [feedback impactOccurred];
-    self.showAll = NO;
-    [self refreshList];
-}
-
-- (void)allTabTap {
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-    [feedback impactOccurred];
-    self.showAll = YES;
-    [self refreshList];
-}
-
-- (void)closeTap {
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-    [feedback impactOccurred];
-    self.hidden = YES;
-}
-
-- (void)clearTap {
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-    [feedback impactOccurred];
-    [[SnifferManager sharedManager] clearMedia];
-    [self refreshList];
-}
-
-- (void)refreshList {
-    SnifferManager *mgr = [SnifferManager sharedManager];
-    NSArray *data = self.showAll ? mgr.allList : mgr.mediaList;
-
-    [self.mediaTabBtn setTitle:[NSString stringWithFormat:@"媒体 %lu", (unsigned long)mgr.mediaList.count] forState:UIControlStateNormal];
-    [self.allTabBtn setTitle:[NSString stringWithFormat:@"全部 %lu", (unsigned long)mgr.allList.count] forState:UIControlStateNormal];
-
-    UIColor *activeBg = [UIColor colorWithRed:0.8 green:0.88 blue:0.98 alpha:1.0];
-    UIColor *activeText = [UIColor colorWithRed:0.06 green:0.38 blue:0.78 alpha:1.0];
-    UIColor *idleBg = [UIColor colorWithWhite:1.0 alpha:0.4];
-    UIColor *idleText = [UIColor colorWithRed:0.42 green:0.45 blue:0.5 alpha:1.0];
-
-    self.mediaTabBtn.backgroundColor = self.showAll ? idleBg : activeBg;
-    [self.mediaTabBtn setTitleColor:self.showAll ? idleText : activeText forState:UIControlStateNormal];
-    self.allTabBtn.backgroundColor = self.showAll ? activeBg : idleBg;
-    [self.allTabBtn setTitleColor:self.showAll ? activeText : idleText forState:UIControlStateNormal];
-
-    BOOL empty = (data.count == 0);
-    self.emptyLabel.text = self.showAll ? @"暂无任何请求记录" : @"暂无媒体资源";
-    self.emptyLabel.hidden = !empty;
-    self.tableView.hidden = empty;
-    [self.tableView reloadData];
-}
-
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    SnifferManager *mgr = [SnifferManager sharedManager];
-    return self.showAll ? mgr.allList.count : mgr.mediaList.count;
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    SnifferManager *mgr = [SnifferManager sharedManager];
-    NSArray *data = self.showAll ? mgr.allList : mgr.mediaList;
-    SnifferMiniCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell" forIndexPath:indexPath];
-    SnifferMediaModel *model = data[indexPath.row];
-    [cell updateWithModel:model index:indexPath.row];
-
-    cell.actionBlock = ^(NSString *actionName) {
-        if ([actionName isEqualToString:@"复制"]) {
-            [UIPasteboard generalPasteboard].string = model.url;
-            return;
-        }
-
-        NSString *encoded = [model.url stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-        NSString *scheme = nil;
-
-        if ([actionName isEqualToString:@"Forward"]) {
-            scheme = [NSString stringWithFormat:@"forward://play?url=%@", encoded];
-        } else if ([actionName isEqualToString:@"Fileball"]) {
-            scheme = [NSString stringWithFormat:@"filebox://play?url=%@", encoded];
-        } else if ([actionName isEqualToString:@"Infuse"]) {
-            scheme = [NSString stringWithFormat:@"infuse://x-callback-url/play?url=%@", encoded];
-        } else if ([actionName isEqualToString:@"SenPlayer"]) {
-            scheme = [NSString stringWithFormat:@"senplayer://x-callback-url/play?url=%@", encoded];
-        }
-
-        if (scheme) {
-            [[UIApplication sharedApplication] openURL:[NSURL URLWithString:scheme] options:@{} completionHandler:nil];
-        }
-    };
-
-    return cell;
-}
-
 @end
 
 @implementation SnifferManager
@@ -441,10 +91,6 @@
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         inst = [[SnifferManager alloc] init];
-        inst.mediaList = [NSMutableArray array];
-        inst.mediaSet = [NSMutableSet set];
-        inst.allList = [NSMutableArray array];
-        inst.allSet = [NSMutableSet set];
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
     });
     return inst;
@@ -513,22 +159,12 @@
 
         if (self.overlayWindow.isSuspendedHidden) {
             self.overlayWindow.isSuspendedHidden = NO;
-            self.overlayWindow.floatingButton.hidden = NO;
-            [UIView animateWithDuration:0.25 animations:^{
-                self.overlayWindow.floatingButton.alpha = 1.0;
-                self.overlayWindow.floatingButton.transform = CGAffineTransformIdentity;
-            }];
+            if (self.latestMediaUrl && self.latestMediaUrl.length > 0) {
+                [self showButtonsWithAnimation];
+            }
         } else {
             self.overlayWindow.isSuspendedHidden = YES;
-            if (self.overlayWindow.panelView) {
-                self.overlayWindow.panelView.hidden = YES;
-            }
-            [UIView animateWithDuration:0.25 animations:^{
-                self.overlayWindow.floatingButton.alpha = 0.0;
-                self.overlayWindow.floatingButton.transform = CGAffineTransformMakeScale(0.5, 0.5);
-            } completion:^(BOOL finished) {
-                self.overlayWindow.floatingButton.hidden = YES;
-            }];
+            [self hideButtonsWithAnimation];
         }
     }
 }
@@ -552,43 +188,6 @@
     [self attachGlobalToggleGesture];
 }
 
-- (NSString *)detectCurrentPageTitle {
-    UIViewController *top = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *w in scene.windows) {
-                if (w != self.overlayWindow && !w.hidden && w.isKeyWindow) {
-                    top = w.rootViewController;
-                    break;
-                }
-            }
-        }
-    }
-    if (!top) {
-        top = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    }
-    while (top.presentedViewController) {
-        top = top.presentedViewController;
-    }
-    if ([top isKindOfClass:[UINavigationController class]]) {
-        top = ((UINavigationController *)top).visibleViewController;
-    }
-    if ([top isKindOfClass:[UITabBarController class]]) {
-        top = ((UITabBarController *)top).selectedViewController;
-        if ([top isKindOfClass:[UINavigationController class]]) {
-            top = ((UINavigationController *)top).visibleViewController;
-        }
-    }
-
-    if (top.navigationItem.title && top.navigationItem.title.length > 0) {
-        return top.navigationItem.title;
-    }
-    if (top.title && top.title.length > 0) {
-        return top.title;
-    }
-    return nil;
-}
-
 - (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
     NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
@@ -606,67 +205,33 @@
     return NO;
 }
 
-- (void)captureUrl:(NSString *)urlStr customTitle:(NSString *)customTitle {
+- (void)captureUrl:(NSString *)urlStr {
     if (!urlStr || ![urlStr isKindOfClass:[NSString class]] || urlStr.length < 8) {
         return;
     }
     if (![urlStr hasPrefix:@"http"]) {
         return;
     }
+    if (![self isMediaUrl:urlStr]) {
+        return;
+    }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSString *derivedTitle = customTitle;
-        if (!derivedTitle || derivedTitle.length == 0) {
-            derivedTitle = [self detectCurrentPageTitle];
-        }
-
-        if (![self.allSet containsObject:urlStr]) {
-            [self.allSet addObject:urlStr];
-            SnifferMediaModel *m = [[SnifferMediaModel alloc] init];
-            m.url = urlStr;
-            m.title = derivedTitle;
-            m.isMedia = [self isMediaUrl:urlStr];
-            [self.allList insertObject:m atIndex:0];
-            if (self.allList.count > 200) {
-                SnifferMediaModel *old = self.allList.lastObject;
-                if (old.url) {
-                    [self.allSet removeObject:old.url];
-                }
-                [self.allList removeLastObject];
-            }
-        }
-
-        if ([self isMediaUrl:urlStr] && ![self.mediaSet containsObject:urlStr]) {
-            [self.mediaSet addObject:urlStr];
-            SnifferMediaModel *m = [[SnifferMediaModel alloc] init];
-            m.url = urlStr;
-            m.title = derivedTitle;
-            m.isMedia = YES;
-            [self.mediaList insertObject:m atIndex:0];
-        }
+        self.latestMediaUrl = urlStr;
 
         if (!self.overlayWindow) {
             [self setupFloatingUI];
         }
 
-        NSString *title = [NSString stringWithFormat:@"🎬 %lu/%lu", (unsigned long)self.mediaList.count, (unsigned long)self.allList.count];
-        [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
-
-        if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
-            [self.overlayWindow.panelView refreshList];
+        if (!self.overlayWindow.isSuspendedHidden) {
+            [self showButtonsWithAnimation];
         }
     });
 }
 
 - (void)clearMedia {
-    [self.mediaList removeAllObjects];
-    [self.mediaSet removeAllObjects];
-    [self.allList removeAllObjects];
-    [self.allSet removeAllObjects];
-    [self.overlayWindow.floatingButton setTitle:@"🎬 0/0" forState:UIControlStateNormal];
-    if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
-        [self.overlayWindow.panelView refreshList];
-    }
+    self.latestMediaUrl = nil;
+    [self hideButtonsWithAnimation];
 }
 
 - (void)setupFloatingUI {
@@ -710,34 +275,59 @@
             CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
             CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
 
-            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-            btn.frame = CGRectMake(screenW - 106, screenH - 220, 94, 38);
-            btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.97 alpha:0.94];
-            btn.layer.cornerRadius = 19;
-            btn.layer.masksToBounds = NO;
-            btn.layer.borderWidth = 0.5;
-            btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.95].CGColor;
-            btn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.15].CGColor;
-            btn.layer.shadowOffset = CGSizeMake(0, 3);
-            btn.layer.shadowRadius = 8;
-            btn.layer.shadowOpacity = 1.0;
-            btn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-            [btn setTitle:@"🎬 0/0" forState:UIControlStateNormal];
-            [btn setTitleColor:[UIColor colorWithRed:0.18 green:0.2 blue:0.24 alpha:1.0] forState:UIControlStateNormal];
-            [btn addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
+            CGFloat btnW = 82;
+            CGFloat btnH = 34;
+            CGFloat spacing = 8;
+            CGFloat totalH = btnH * 4 + spacing * 3;
 
-            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
-            [btn addGestureRecognizer:pan];
+            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(screenW - btnW - 10, (screenH - totalH) / 2.0, btnW, totalH)];
+            container.backgroundColor = [UIColor clearColor];
+            container.hidden = YES;
+            container.alpha = 0.0;
 
-            self.overlayWindow.floatingButton = btn;
-            [rootVC.view addSubview:btn];
+            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanContainer:)];
+            [container addGestureRecognizer:pan];
 
-            CGFloat panelW = MIN(screenW - 32, 350);
-            CGFloat panelH = 310;
-            SnifferMiniPanelView *panel = [[SnifferMiniPanelView alloc] initWithFrame:CGRectMake(screenW - panelW - 16, screenH - panelH - 120, panelW, panelH)];
-            panel.hidden = YES;
-            self.overlayWindow.panelView = panel;
-            [rootVC.view addSubview:panel];
+            NSArray *titles = @[@"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
+            NSMutableArray<UIButton *> *btnArray = [NSMutableArray array];
+
+            for (NSInteger i = 0; i < titles.count; i++) {
+                NSString *title = titles[i];
+                UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+                btn.frame = CGRectMake(0, i * (btnH + spacing), btnW, btnH);
+                btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.92];
+                btn.layer.cornerRadius = 10;
+                btn.layer.masksToBounds = NO;
+                btn.layer.borderWidth = 0.5;
+                btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
+                btn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.15].CGColor;
+                btn.layer.shadowOffset = CGSizeMake(0, 2);
+                btn.layer.shadowRadius = 4;
+                btn.layer.shadowOpacity = 1.0;
+                btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+                [btn setTitle:title forState:UIControlStateNormal];
+
+                if ([title isEqualToString:@"Forward"]) {
+                    [btn setTitleColor:[UIColor colorWithRed:0.05 green:0.45 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
+                } else if ([title isEqualToString:@"Fileball"]) {
+                    [btn setTitleColor:[UIColor colorWithRed:0.15 green:0.52 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
+                } else if ([title isEqualToString:@"Infuse"]) {
+                    [btn setTitleColor:[UIColor colorWithRed:0.5 green:0.18 blue:0.62 alpha:1.0] forState:UIControlStateNormal];
+                } else if ([title isEqualToString:@"SenPlayer"]) {
+                    [btn setTitleColor:[UIColor colorWithRed:0.28 green:0.35 blue:0.78 alpha:1.0] forState:UIControlStateNormal];
+                }
+
+                [btn addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
+                [btn addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+                [btn addTarget:self action:@selector(playerBtnTap:) forControlEvents:UIControlEventTouchUpInside];
+
+                [container addSubview:btn];
+                [btnArray addObject:btn];
+            }
+
+            self.playerButtons = btnArray;
+            self.overlayWindow.buttonsContainer = container;
+            [rootVC.view addSubview:container];
         } else {
             if (@available(iOS 13.0, *)) {
                 if (scene && self.overlayWindow.windowScene != scene) {
@@ -750,72 +340,92 @@
     });
 }
 
-- (void)onPan:(UIPanGestureRecognizer *)pan {
-    UIView *btn = self.overlayWindow.floatingButton;
-    UIView *superView = btn.superview;
-    CGPoint translation = [pan translationInView:superView];
-    CGPoint center = btn.center;
-    center.x += translation.x;
-    center.y += translation.y;
-    btn.center = center;
-    [pan setTranslation:CGPointMake(0.0, 0.0) inView:superView];
-
-    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        CGFloat screenW = superView.bounds.size.width;
-        CGFloat screenH = superView.bounds.size.height;
-        CGFloat btnW = btn.frame.size.width;
-        CGFloat btnH = btn.frame.size.height;
-
-        CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 10) : (btnW / 2.0 + 10);
-        CGFloat targetY = MIN(MAX(center.y, 40 + btnH / 2.0), screenH - 40 - btnH / 2.0);
-
-        [UIView animateWithDuration:0.25 animations:^{
-            btn.center = CGPointMake(targetX, targetY);
-        }];
-    }
-}
-
-- (void)togglePanel {
+- (void)btnTouchDown:(UIButton *)btn {
     UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [feedback impactOccurred];
+    [UIView animateWithDuration:0.1 animations:^{
+        btn.transform = CGAffineTransformMakeScale(0.92, 0.92);
+    }];
+}
 
-    SnifferMiniPanelView *panel = self.overlayWindow.panelView;
-    if (!panel) {
+- (void)btnTouchUp:(UIButton *)btn {
+    [UIView animateWithDuration:0.1 animations:^{
+        btn.transform = CGAffineTransformIdentity;
+    }];
+}
+
+- (void)playerBtnTap:(UIButton *)btn {
+    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [feedback impactOccurred];
+
+    if (!self.latestMediaUrl || self.latestMediaUrl.length == 0) {
         return;
     }
 
-    if (panel.hidden) {
-        CGRect btnFrame = self.overlayWindow.floatingButton.frame;
-        CGFloat panelW = panel.frame.size.width;
-        CGFloat panelH = panel.frame.size.height;
-        CGFloat screenW = self.overlayWindow.rootViewController.view.bounds.size.width;
-        CGFloat screenH = self.overlayWindow.rootViewController.view.bounds.size.height;
+    NSString *encoded = [self.latestMediaUrl stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+    NSString *scheme = nil;
+    NSString *name = btn.currentTitle;
 
-        CGFloat panelX = (btnFrame.origin.x + btnFrame.size.width / 2.0 > screenW / 2.0) ? (screenW - panelW - 12) : 12;
-        CGFloat panelY = btnFrame.origin.y - panelH - 8;
-        if (panelY < 40) {
-            panelY = btnFrame.origin.y + btnFrame.size.height + 8;
-        }
-        if (panelY + panelH > screenH - 30) {
-            panelY = screenH - panelH - 30;
-        }
+    if ([name isEqualToString:@"Forward"]) {
+        scheme = [NSString stringWithFormat:@"forward://play?url=%@", encoded];
+    } else if ([name isEqualToString:@"Fileball"]) {
+        scheme = [NSString stringWithFormat:@"filebox://play?url=%@", encoded];
+    } else if ([name isEqualToString:@"Infuse"]) {
+        scheme = [NSString stringWithFormat:@"infuse://x-callback-url/play?url=%@", encoded];
+    } else if ([name isEqualToString:@"SenPlayer"]) {
+        scheme = [NSString stringWithFormat:@"senplayer://x-callback-url/play?url=%@", encoded];
+    }
 
-        panel.frame = CGRectMake(panelX, panelY, panelW, panelH);
-        [panel refreshList];
-        panel.alpha = 0.0;
-        panel.hidden = NO;
-        panel.transform = CGAffineTransformMakeScale(0.95, 0.95);
-        [UIView animateWithDuration:0.25 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0.5 options:0 animations:^{
-            panel.alpha = 1.0;
-            panel.transform = CGAffineTransformIdentity;
+    if (scheme) {
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:scheme] options:@{} completionHandler:nil];
+    }
+}
+
+- (void)showButtonsWithAnimation {
+    UIView *container = self.overlayWindow.buttonsContainer;
+    if (!container) {
+        return;
+    }
+    if (container.hidden || container.alpha < 0.05) {
+        container.hidden = NO;
+        container.transform = CGAffineTransformMakeTranslation(50, 0);
+        [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:0 animations:^{
+            container.alpha = 1.0;
+            container.transform = CGAffineTransformIdentity;
         } completion:nil];
-    } else {
-        [UIView animateWithDuration:0.2 animations:^{
-            panel.alpha = 0.0;
-            panel.transform = CGAffineTransformMakeScale(0.95, 0.95);
-        } completion:^(BOOL finished) {
-            panel.hidden = YES;
-            panel.transform = CGAffineTransformIdentity;
+    }
+}
+
+- (void)hideButtonsWithAnimation {
+    UIView *container = self.overlayWindow.buttonsContainer;
+    if (!container || container.hidden) {
+        return;
+    }
+    [UIView animateWithDuration:0.25 animations:^{
+        container.alpha = 0.0;
+        container.transform = CGAffineTransformMakeTranslation(40, 0);
+    } completion:^(BOOL finished) {
+        container.hidden = YES;
+        container.transform = CGAffineTransformIdentity;
+    }];
+}
+
+- (void)onPanContainer:(UIPanGestureRecognizer *)pan {
+    UIView *container = self.overlayWindow.buttonsContainer;
+    UIView *superView = container.superview;
+    CGPoint translation = [pan translationInView:superView];
+    CGPoint center = container.center;
+    center.y += translation.y;
+    container.center = center;
+    [pan setTranslation:CGPointMake(0.0, 0.0) inView:superView];
+
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        CGFloat screenH = superView.bounds.size.height;
+        CGFloat h = container.frame.size.height;
+        CGFloat targetY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
+
+        [UIView animateWithDuration:0.25 animations:^{
+            container.center = CGPointMake(center.x, targetY);
         }];
     }
 }
@@ -870,28 +480,28 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_URLWithString:(NSString *)URLString {
     if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
     return [self sniff_URLWithString:URLString];
 }
 
 + (instancetype)sniff_URLWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
     if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
     return [self sniff_URLWithString:URLString relativeToURL:baseURL];
 }
 
 - (instancetype)sniff_initWithString:(NSString *)URLString {
     if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
     return [self sniff_initWithString:URLString];
 }
 
 - (instancetype)sniff_initWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
     if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URLString];
     }
     return [self sniff_initWithString:URLString relativeToURL:baseURL];
 }
@@ -912,8 +522,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                     if(u.indexOf('blob:')===0||u.indexOf('data:')===0)return;\
                     var abs=u;\
                     try{abs=new URL(u,location.href).href;}catch(e){}\
-                    var pageTitle = document.title || '';\
-                    try{window.webkit.messageHandlers.SnifferBridge.postMessage({url: abs, title: pageTitle});}catch(e){}\
+                    try{window.webkit.messageHandlers.SnifferBridge.postMessage(abs);}catch(e){}\
                 }catch(e){}\
             }\
             function check(){\
@@ -966,7 +575,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (WKNavigation *)sniff_loadRequest:(NSURLRequest *)request {
     if (request.URL) {
-        [[SnifferManager sharedManager] captureUrl:request.URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:request.URL.absoluteString];
     }
     return [self sniff_loadRequest:request];
 }
@@ -980,7 +589,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_assetWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_assetWithURL:URL];
 }
@@ -994,7 +603,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_playerWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_playerWithURL:URL];
 }
@@ -1003,7 +612,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)item.asset).URL;
         if (u) {
-            [[SnifferManager sharedManager] captureUrl:u.absoluteString customTitle:nil];
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
     return [self sniff_playerWithPlayerItem:item];
@@ -1011,7 +620,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL];
 }
@@ -1020,7 +629,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)item.asset).URL;
         if (u) {
-            [[SnifferManager sharedManager] captureUrl:u.absoluteString customTitle:nil];
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
     return [self sniff_initWithPlayerItem:item];
@@ -1030,7 +639,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)item.asset).URL;
         if (u) {
-            [[SnifferManager sharedManager] captureUrl:u.absoluteString customTitle:nil];
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
     [self sniff_replaceCurrentItemWithPlayerItem:item];
@@ -1045,7 +654,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_playerItemWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_playerItemWithURL:URL];
 }
@@ -1054,7 +663,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     if ([asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)asset).URL;
         if (u) {
-            [[SnifferManager sharedManager] captureUrl:u.absoluteString customTitle:nil];
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
     return [self sniff_playerItemWithAsset:asset];
@@ -1062,7 +671,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL];
 }
@@ -1071,7 +680,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     if ([asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)asset).URL;
         if (u) {
-            [[SnifferManager sharedManager] captureUrl:u.absoluteString customTitle:nil];
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
     return [self sniff_initWithAsset:asset];
@@ -1086,14 +695,14 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 + (instancetype)sniff_URLAssetWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_URLAssetWithURL:URL options:options];
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL options:options];
 }
@@ -1107,49 +716,49 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 - (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl withOptions:(id)options {
     if (aUrl) {
-        [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString];
     }
     return [self sniff_ijk_initWithContentURL:aUrl withOptions:options];
 }
 
 - (instancetype)sniff_ijk_initWithContentURLString:(NSString *)aUrlStr withOptions:(id)options {
     if (aUrlStr) {
-        [[SnifferManager sharedManager] captureUrl:aUrlStr customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:aUrlStr];
     }
     return [self sniff_ijk_initWithContentURLString:aUrlStr withOptions:options];
 }
 
 - (void)sniff_ali_setUrl:(NSString *)url {
     if (url) {
-        [[SnifferManager sharedManager] captureUrl:url customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:url];
     }
     [self sniff_ali_setUrl:url];
 }
 
 - (int)sniff_txvod_startPlay:(NSString *)url {
     if (url) {
-        [[SnifferManager sharedManager] captureUrl:url customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:url];
     }
     return [self sniff_txvod_startPlay:url];
 }
 
 - (int)sniff_txvod_startVodPlay:(NSString *)url {
     if (url) {
-        [[SnifferManager sharedManager] captureUrl:url customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:url];
     }
     return [self sniff_txvod_startVodPlay:url];
 }
 
 - (int)sniff_txlive_startPlay:(NSString *)url type:(int)playType {
     if (url) {
-        [[SnifferManager sharedManager] captureUrl:url customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:url];
     }
     return [self sniff_txlive_startPlay:url type:playType];
 }
 
 + (instancetype)sniff_pl_playerWithURL:(NSURL *)URL option:(id)option {
     if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString customTitle:nil];
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_pl_playerWithURL:URL option:option];
 }
