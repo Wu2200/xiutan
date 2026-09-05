@@ -11,10 +11,26 @@
 @implementation SnifferMediaModel
 @end
 
+@interface SnifferOverlayWindow : UIWindow
+@end
+
+@implementation SnifferOverlayWindow
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.rootViewController.presentedViewController) {
+        return [super hitTest:point withEvent:event];
+    }
+    UIView *view = [super hitTest:point withEvent:event];
+    if (view == self || view == self.rootViewController.view) {
+        return nil;
+    }
+    return view;
+}
+@end
+
 @interface SnifferManager : NSObject
 @property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *mediaList;
 @property (nonatomic, strong) NSMutableSet<NSString *> *urlSet;
-@property (nonatomic, strong) UIWindow *overlayWindow;
+@property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
 @property (nonatomic, strong) UIButton *floatingButton;
 + (instancetype)sharedManager;
 - (void)addMediaUrl:(NSString *)urlStr;
@@ -249,7 +265,11 @@
 
 - (void)registerNotifications {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIApplicationDidBecomeActiveNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UISceneDidActivateNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIWindowDidBecomeVisibleNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIWindowDidBecomeKeyNotification object:nil];
+    if (@available(iOS 13.0, *)) {
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UISceneDidActivateNotification object:nil];
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
         [self setupFloatingWindow];
     });
@@ -306,29 +326,33 @@
 - (void)setupFloatingWindow {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindowScene *activeScene = nil;
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-                activeScene = (UIWindowScene *)scene;
-                break;
-            }
-        }
-
-        if (!activeScene) {
+        if (@available(iOS 13.0, *)) {
             for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
                 if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    activeScene = (UIWindowScene *)scene;
-                    break;
+                    UIWindowScene *ws = (UIWindowScene *)scene;
+                    if (ws.activationState == UISceneActivationStateForegroundActive) {
+                        activeScene = ws;
+                        break;
+                    }
+                    if (!activeScene) {
+                        activeScene = ws;
+                    }
                 }
             }
         }
 
-        if (!activeScene) {
-            return;
-        }
-
         if (!self.overlayWindow) {
-            self.overlayWindow = [[UIWindow alloc] initWithWindowScene:activeScene];
-            self.overlayWindow.frame = CGRectMake([UIScreen mainScreen].bounds.size.width - 90, [UIScreen mainScreen].bounds.size.height - 200, 75, 36);
+            if (@available(iOS 13.0, *)) {
+                if (activeScene) {
+                    self.overlayWindow = [[SnifferOverlayWindow alloc] initWithWindowScene:activeScene];
+                } else {
+                    self.overlayWindow = [[SnifferOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+                }
+            } else {
+                self.overlayWindow = [[SnifferOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+            }
+
+            self.overlayWindow.frame = [UIScreen mainScreen].bounds;
             self.overlayWindow.windowLevel = UIWindowLevelAlert + 1000;
             self.overlayWindow.backgroundColor = [UIColor clearColor];
 
@@ -336,9 +360,11 @@
             rootVC.view.backgroundColor = [UIColor clearColor];
             self.overlayWindow.rootViewController = rootVC;
 
+            CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+            CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
+
             self.floatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
-            self.floatingButton.frame = self.overlayWindow.bounds;
-            self.floatingButton.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            self.floatingButton.frame = CGRectMake(screenW - 85, screenH - 220, 75, 36);
             self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:0.85];
             self.floatingButton.layer.cornerRadius = 18;
             self.floatingButton.layer.masksToBounds = YES;
@@ -352,8 +378,10 @@
 
             [rootVC.view addSubview:self.floatingButton];
         } else {
-            if (self.overlayWindow.windowScene != activeScene) {
-                self.overlayWindow.windowScene = activeScene;
+            if (@available(iOS 13.0, *)) {
+                if (activeScene && self.overlayWindow.windowScene != activeScene) {
+                    self.overlayWindow.windowScene = activeScene;
+                }
             }
         }
 
@@ -362,24 +390,26 @@
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
-    CGPoint translation = [pan translationInView:self.overlayWindow];
-    CGRect frame = self.overlayWindow.frame;
-    frame.origin.x += translation.x;
-    frame.origin.y += translation.y;
-    self.overlayWindow.frame = frame;
-    [pan setTranslation:CGPointMake(0.0, 0.0) inView:self.overlayWindow];
+    UIView *btn = self.floatingButton;
+    UIView *superView = btn.superview;
+    CGPoint translation = [pan translationInView:superView];
+    CGPoint center = btn.center;
+    center.x += translation.x;
+    center.y += translation.y;
+    btn.center = center;
+    [pan setTranslation:CGPointMake(0.0, 0.0) inView:superView];
 
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
-        CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
-        CGFloat targetX = (frame.origin.x + frame.size.width / 2.0 > screenWidth / 2.0) ? (screenWidth - frame.size.width - 10) : 10;
-        CGFloat targetY = MIN(MAX(frame.origin.y, 50), screenHeight - frame.size.height - 50);
+        CGFloat screenW = superView.bounds.size.width;
+        CGFloat screenH = superView.bounds.size.height;
+        CGFloat btnW = btn.frame.size.width;
+        CGFloat btnH = btn.frame.size.height;
+
+        CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 10) : (btnW / 2.0 + 10);
+        CGFloat targetY = MIN(MAX(center.y, 60 + btnH / 2.0), screenH - 60 - btnH / 2.0);
 
         [UIView animateWithDuration:0.25 animations:^{
-            CGRect finalFrame = frame;
-            finalFrame.origin.x = targetX;
-            finalFrame.origin.y = targetY;
-            self.overlayWindow.frame = finalFrame;
+            btn.center = CGPointMake(targetX, targetY);
         }];
     }
 }
@@ -388,32 +418,7 @@
     SnifferListViewController *listVC = [[SnifferListViewController alloc] init];
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:listVC];
     nav.modalPresentationStyle = UIModalPresentationPageSheet;
-
-    UIViewController *topVC = [self topViewController];
-    if (topVC) {
-        [topVC presentViewController:nav animated:YES completion:nil];
-    }
-}
-
-- (UIViewController *)topViewController {
-    UIViewController *root = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *window in scene.windows) {
-                if (window.isKeyWindow && window != self.overlayWindow) {
-                    root = window.rootViewController;
-                    break;
-                }
-            }
-        }
-    }
-    if (!root) {
-        root = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    }
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
-    }
-    return root;
+    [self.overlayWindow.rootViewController presentViewController:nav animated:YES completion:nil];
 }
 
 @end
@@ -446,6 +451,27 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
         method_exchangeImplementations(origMethod, swizzledMethod);
     }
 }
+
+@interface AVPlayer (Sniffer)
+@end
+
+@implementation AVPlayer (Sniffer)
+
++ (instancetype)sniff_playerWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_playerWithURL:URL];
+}
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL];
+}
+
+@end
 
 @interface AVPlayerItem (Sniffer)
 @end
@@ -511,15 +537,33 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     return [self sniff_dataTaskWithURL:url];
 }
 
+- (NSURLSessionDataTask *)sniff_dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    if (request.URL) {
+        [[SnifferManager sharedManager] addMediaUrl:request.URL.absoluteString];
+    }
+    return [self sniff_dataTaskWithRequest:request completionHandler:completionHandler];
+}
+
+- (NSURLSessionDataTask *)sniff_dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
+    if (url) {
+        [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
+    }
+    return [self sniff_dataTaskWithURL:url completionHandler:completionHandler];
+}
+
 @end
 
 __attribute__((constructor)) static void SnifferInit(void) {
+    SwizzleClassMethod([AVPlayer class], @selector(playerWithURL:), @selector(sniff_playerWithURL:));
+    SwizzleMethod([AVPlayer class], @selector(initWithURL:), @selector(sniff_initWithURL:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:), @selector(sniff_initWithAsset:));
     SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
     SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
     SwizzleMethod([NSURLSession class], @selector(dataTaskWithRequest:), @selector(sniff_dataTaskWithRequest:));
     SwizzleMethod([NSURLSession class], @selector(dataTaskWithURL:), @selector(sniff_dataTaskWithURL:));
+    SwizzleMethod([NSURLSession class], @selector(dataTaskWithRequest:completionHandler:), @selector(sniff_dataTaskWithRequest:completionHandler:));
+    SwizzleMethod([NSURLSession class], @selector(dataTaskWithURL:completionHandler:), @selector(sniff_dataTaskWithURL:completionHandler:));
 
     [[SnifferManager sharedManager] registerNotifications];
 }
