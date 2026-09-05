@@ -24,6 +24,7 @@ jobs:
             -framework UIKit \
             -framework AVFoundation \
             -framework CoreGraphics \
+            -framework WebKit \
             -o VideoSniffer.dylib \
             VideoSniffer.m
 
