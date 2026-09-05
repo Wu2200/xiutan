@@ -20,6 +20,7 @@
 - (void)addMediaUrl:(NSString *)urlStr;
 - (void)setupFloatingWindow;
 - (void)clearMedia;
+- (void)registerNotifications;
 @end
 
 @interface SnifferMediaCell : UITableViewCell
@@ -246,6 +247,18 @@
     return instance;
 }
 
+- (void)registerNotifications {
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UISceneDidActivateNotification object:nil];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self setupFloatingWindow];
+    });
+}
+
+- (void)lifecycleNotificationTriggered:(NSNotification *)notification {
+    [self setupFloatingWindow];
+}
+
 - (void)addMediaUrl:(NSString *)urlStr {
     if (!urlStr || urlStr.length == 0 || [urlStr hasPrefix:@"blob:"]) {
         return;
@@ -291,53 +304,61 @@
 }
 
 - (void)setupFloatingWindow {
-    UIWindowScene *activeScene = nil;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            activeScene = (UIWindowScene *)scene;
-            break;
-        }
-    }
-
-    if (!activeScene) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindowScene *activeScene = nil;
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
+            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
                 activeScene = (UIWindowScene *)scene;
                 break;
             }
         }
-    }
 
-    if (activeScene) {
-        self.overlayWindow = [[UIWindow alloc] initWithWindowScene:activeScene];
-    } else {
-        self.overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    }
+        if (!activeScene) {
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    activeScene = (UIWindowScene *)scene;
+                    break;
+                }
+            }
+        }
 
-    self.overlayWindow.frame = CGRectMake([UIScreen mainScreen].bounds.size.width - 90, [UIScreen mainScreen].bounds.size.height - 200, 75, 36);
-    self.overlayWindow.windowLevel = UIWindowLevelAlert + 100;
-    self.overlayWindow.backgroundColor = [UIColor clearColor];
+        if (!activeScene) {
+            return;
+        }
 
-    UIViewController *rootVC = [[UIViewController alloc] init];
-    rootVC.view.backgroundColor = [UIColor clearColor];
-    self.overlayWindow.rootViewController = rootVC;
+        if (!self.overlayWindow) {
+            self.overlayWindow = [[UIWindow alloc] initWithWindowScene:activeScene];
+            self.overlayWindow.frame = CGRectMake([UIScreen mainScreen].bounds.size.width - 90, [UIScreen mainScreen].bounds.size.height - 200, 75, 36);
+            self.overlayWindow.windowLevel = UIWindowLevelAlert + 1000;
+            self.overlayWindow.backgroundColor = [UIColor clearColor];
 
-    self.floatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.floatingButton.frame = self.overlayWindow.bounds;
-    self.floatingButton.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:0.85];
-    self.floatingButton.layer.cornerRadius = 18;
-    self.floatingButton.layer.masksToBounds = YES;
-    self.floatingButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-    [self.floatingButton setTitle:@"嗅探 0" forState:UIControlStateNormal];
-    [self.floatingButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [self.floatingButton addTarget:self action:@selector(openPanel) forControlEvents:UIControlEventTouchUpInside];
+            UIViewController *rootVC = [[UIViewController alloc] init];
+            rootVC.view.backgroundColor = [UIColor clearColor];
+            self.overlayWindow.rootViewController = rootVC;
 
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-    [self.floatingButton addGestureRecognizer:pan];
+            self.floatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+            self.floatingButton.frame = self.overlayWindow.bounds;
+            self.floatingButton.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:0.85];
+            self.floatingButton.layer.cornerRadius = 18;
+            self.floatingButton.layer.masksToBounds = YES;
+            self.floatingButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+            [self.floatingButton setTitle:@"嗅探 0" forState:UIControlStateNormal];
+            [self.floatingButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [self.floatingButton addTarget:self action:@selector(openPanel) forControlEvents:UIControlEventTouchUpInside];
 
-    [rootVC.view addSubview:self.floatingButton];
-    self.overlayWindow.hidden = NO;
+            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+            [self.floatingButton addGestureRecognizer:pan];
+
+            [rootVC.view addSubview:self.floatingButton];
+        } else {
+            if (self.overlayWindow.windowScene != activeScene) {
+                self.overlayWindow.windowScene = activeScene;
+            }
+        }
+
+        self.overlayWindow.hidden = NO;
+    });
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -500,7 +521,5 @@ __attribute__((constructor)) static void SnifferInit(void) {
     SwizzleMethod([NSURLSession class], @selector(dataTaskWithRequest:), @selector(sniff_dataTaskWithRequest:));
     SwizzleMethod([NSURLSession class], @selector(dataTaskWithURL:), @selector(sniff_dataTaskWithURL:));
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [[SnifferManager sharedManager] setupFloatingWindow];
-    });
+    [[SnifferManager sharedManager] registerNotifications];
 }
