@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 
 @interface SnifferMediaModel : NSObject
@@ -345,7 +346,7 @@
     frame.origin.x += translation.x;
     frame.origin.y += translation.y;
     self.overlayWindow.frame = frame;
-    [pan setTranslation:CGPointZero inView:self.overlayWindow];
+    [pan setTranslation:CGPointMake(0.0, 0.0) inView:self.overlayWindow];
 
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
         CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
