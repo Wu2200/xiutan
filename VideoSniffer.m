@@ -35,51 +35,26 @@
 - (void)handleHostPageChanged:(UIViewController *)vc;
 - (void)savePositionRatio:(CGFloat)ratio;
 - (CGFloat)loadPositionRatio;
+- (void)checkOrientationAndAdjustVisibility;
 @end
 
 @implementation SnifferRootViewController
 
 - (BOOL)shouldAutorotate {
-    UIWindow *keyWin = [SnifferManager hostKeyWindow];
-    if (keyWin.rootViewController) {
-        return [keyWin.rootViewController shouldAutorotate];
-    }
     return NO;
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    UIWindow *keyWin = [SnifferManager hostKeyWindow];
-    if (keyWin.rootViewController) {
-        return [keyWin.rootViewController supportedInterfaceOrientations];
-    }
     return UIInterfaceOrientationMaskPortrait;
 }
 
 - (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation {
-    UIWindow *keyWin = [SnifferManager hostKeyWindow];
-    if (keyWin.rootViewController) {
-        return [keyWin.rootViewController preferredInterfaceOrientationForPresentation];
-    }
     return UIInterfaceOrientationPortrait;
 }
 
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-    [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
-        SnifferOverlayWindow *win = (SnifferOverlayWindow *)self.view.window;
-        if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
-            CGFloat ratio = [[SnifferManager sharedManager] loadPositionRatio];
-            CGFloat targetCenterY = ratio * size.height;
-            UIView *container = win.buttonsContainer;
-            if (container) {
-                CGFloat w = container.frame.size.width;
-                CGFloat h = container.frame.size.height;
-                CGFloat safeX = size.width - w - 10;
-                CGFloat safeY = MIN(MAX(targetCenterY - h / 2.0, 40), size.height - h - 40);
-                container.frame = CGRectMake(safeX, safeY, w, h);
-            }
-        }
-    } completion:nil];
+    [[SnifferManager sharedManager] checkOrientationAndAdjustVisibility];
 }
 
 @end
@@ -181,6 +156,23 @@
 - (void)onActive {
     [self setupFloatingUI];
     [self attachGlobalToggleGesture];
+    [self checkOrientationAndAdjustVisibility];
+}
+
+- (void)checkOrientationAndAdjustVisibility {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *mainWin = [SnifferManager hostKeyWindow];
+        CGSize screenSize = mainWin ? mainWin.bounds.size : [UIScreen mainScreen].bounds.size;
+        BOOL isLandscape = (screenSize.width > screenSize.height);
+
+        if (isLandscape) {
+            [self hideButtonsWithAnimation];
+        } else {
+            if (!self.overlayWindow.isSuspendedHidden && self.latestMediaUrl && self.latestMediaUrl.length > 0) {
+                [self showButtonsWithAnimation];
+            }
+        }
+    });
 }
 
 - (void)attachGlobalToggleGesture {
@@ -214,9 +206,7 @@
 
         if (self.overlayWindow.isSuspendedHidden) {
             self.overlayWindow.isSuspendedHidden = NO;
-            if (self.latestMediaUrl && self.latestMediaUrl.length > 0) {
-                [self showButtonsWithAnimation];
-            }
+            [self checkOrientationAndAdjustVisibility];
         } else {
             self.overlayWindow.isSuspendedHidden = YES;
             [self hideButtonsWithAnimation];
@@ -241,6 +231,7 @@
     }
     self.lastActiveVC = vc;
     [self attachGlobalToggleGesture];
+    [self checkOrientationAndAdjustVisibility];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -331,10 +322,7 @@
             [self setupFloatingUI];
         }
 
-        if (!self.overlayWindow.isSuspendedHidden) {
-            [self showButtonsWithAnimation];
-        }
-
+        [self checkOrientationAndAdjustVisibility];
         [self rotateRefreshIcon];
     });
 }
@@ -670,6 +658,23 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 @end
 
+@interface NSURLSessionTask (SnifferLive)
+@end
+
+@implementation NSURLSessionTask (SnifferLive)
+
+- (void)sniff_resume {
+    if (self.originalRequest.URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:self.originalRequest.URL.absoluteString];
+    }
+    if (self.currentRequest.URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:self.currentRequest.URL.absoluteString];
+    }
+    [self sniff_resume];
+}
+
+@end
+
 @interface WKWebView (Sniffer)
 @end
 
@@ -697,7 +702,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                 }catch(e){}\
             }\
             check();\
-            setInterval(check,800);\
+            setInterval(check,600);\
             var origOpen=XMLHttpRequest.prototype.open;\
             XMLHttpRequest.prototype.open=function(m,u){\
                 postUrl(u);\
@@ -713,7 +718,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                     return origFetch.apply(this,arguments);\
                 };\
             }\
-            if(window.HTMLMediaElement&&HTMLMediaElement.prototype.play){\
+            if(window.HTMLMediaElement){\
                 var origPlay=HTMLMediaElement.prototype.play;\
                 HTMLMediaElement.prototype.play=function(){\
                     try{\
@@ -721,6 +726,14 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                         if(this.currentSrc)postUrl(this.currentSrc);\
                     }catch(e){}\
                     return origPlay.apply(this,arguments);\
+                };\
+                var origLoad=HTMLMediaElement.prototype.load;\
+                HTMLMediaElement.prototype.load=function(){\
+                    try{\
+                        if(this.src)postUrl(this.src);\
+                        if(this.currentSrc)postUrl(this.currentSrc);\
+                    }catch(e){}\
+                    return origLoad.apply(this,arguments);\
                 };\
             }\
         })();";
@@ -963,6 +976,12 @@ __attribute__((constructor)) static void SnifferInit(void) {
     SwizzleClassMethod([NSURL class], @selector(URLWithString:relativeToURL:), @selector(sniff_URLWithString:relativeToURL:));
     SwizzleMethod([NSURL class], @selector(initWithString:), @selector(sniff_initWithString:));
     SwizzleMethod([NSURL class], @selector(initWithString:relativeToURL:), @selector(sniff_initWithString:relativeToURL:));
+
+    Class taskCls = NSClassFromString(@"__NSCFURLSessionTask");
+    if (taskCls) {
+        SwizzleMethod(taskCls, @selector(resume), @selector(sniff_resume));
+    }
+    SwizzleMethod([NSURLSessionTask class], @selector(resume), @selector(sniff_resume));
 
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
     SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
