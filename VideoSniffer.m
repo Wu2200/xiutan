@@ -252,4 +252,254 @@
 
     NSString *lower = [urlStr lowercaseString];
     BOOL isMedia = NO;
-    NSArray *extensions = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".ts", @".mp3", @".mThis request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasing your prompt. You can [send feedback](https://ai.google.dev/gemini-api/docs/troubleshooting#file-bug) or read more about [our policies here](https://policies.google.com/terms/generative-ai/use-policy).
+    NSArray *extensions = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".ts", @".mp3", @".m4a", @".aac"];
+    for (NSString *ext in extensions) {
+        if ([lower containsString:ext]) {
+            isMedia = YES;
+            break;
+        }
+    }
+
+    if (!isMedia) {
+        return;
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([self.urlSet containsObject:urlStr]) {
+            return;
+        }
+
+        [self.urlSet addObject:urlStr];
+        SnifferMediaModel *model = [[SnifferMediaModel alloc] init];
+        model.url = urlStr;
+        [self.mediaList insertObject:model atIndex:0];
+
+        if (!self.overlayWindow) {
+            [self setupFloatingWindow];
+        }
+
+        NSString *btnTitle = [NSString stringWithFormat:@"嗅探 %lu", (unsigned long)self.mediaList.count];
+        [self.floatingButton setTitle:btnTitle forState:UIControlStateNormal];
+    });
+}
+
+- (void)clearMedia {
+    [self.mediaList removeAllObjects];
+    [self.urlSet removeAllObjects];
+    [self.floatingButton setTitle:@"嗅探 0" forState:UIControlStateNormal];
+}
+
+- (void)setupFloatingWindow {
+    UIWindowScene *activeScene = nil;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+            activeScene = (UIWindowScene *)scene;
+            break;
+        }
+    }
+
+    if (!activeScene) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                activeScene = (UIWindowScene *)scene;
+                break;
+            }
+        }
+    }
+
+    if (activeScene) {
+        self.overlayWindow = [[UIWindow alloc] initWithWindowScene:activeScene];
+    } else {
+        self.overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    }
+
+    self.overlayWindow.frame = CGRectMake([UIScreen mainScreen].bounds.size.width - 90, [UIScreen mainScreen].bounds.size.height - 200, 75, 36);
+    self.overlayWindow.windowLevel = UIWindowLevelAlert + 100;
+    self.overlayWindow.backgroundColor = [UIColor clearColor];
+
+    UIViewController *rootVC = [[UIViewController alloc] init];
+    rootVC.view.backgroundColor = [UIColor clearColor];
+    self.overlayWindow.rootViewController = rootVC;
+
+    self.floatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.floatingButton.frame = self.overlayWindow.bounds;
+    self.floatingButton.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:0.85];
+    self.floatingButton.layer.cornerRadius = 18;
+    self.floatingButton.layer.masksToBounds = YES;
+    self.floatingButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    [self.floatingButton setTitle:@"嗅探 0" forState:UIControlStateNormal];
+    [self.floatingButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [self.floatingButton addTarget:self action:@selector(openPanel) forControlEvents:UIControlEventTouchUpInside];
+
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+    [self.floatingButton addGestureRecognizer:pan];
+
+    [rootVC.view addSubview:self.floatingButton];
+    self.overlayWindow.hidden = NO;
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
+    CGPoint translation = [pan translationInView:self.overlayWindow];
+    CGRect frame = self.overlayWindow.frame;
+    frame.origin.x += translation.x;
+    frame.origin.y += translation.y;
+    self.overlayWindow.frame = frame;
+    [pan setTranslation:CGPointZero inView:self.overlayWindow];
+
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+        CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+        CGFloat targetX = (frame.origin.x + frame.size.width / 2.0 > screenWidth / 2.0) ? (screenWidth - frame.size.width - 10) : 10;
+        CGFloat targetY = MIN(MAX(frame.origin.y, 50), screenHeight - frame.size.height - 50);
+
+        [UIView animateWithDuration:0.25 animations:^{
+            CGRect finalFrame = frame;
+            finalFrame.origin.x = targetX;
+            finalFrame.origin.y = targetY;
+            self.overlayWindow.frame = finalFrame;
+        }];
+    }
+}
+
+- (void)openPanel {
+    SnifferListViewController *listVC = [[SnifferListViewController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:listVC];
+    nav.modalPresentationStyle = UIModalPresentationPageSheet;
+
+    UIViewController *topVC = [self topViewController];
+    if (topVC) {
+        [topVC presentViewController:nav animated:YES completion:nil];
+    }
+}
+
+- (UIViewController *)topViewController {
+    UIViewController *root = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *window in scene.windows) {
+                if (window.isKeyWindow && window != self.overlayWindow) {
+                    root = window.rootViewController;
+                    break;
+                }
+            }
+        }
+    }
+    if (!root) {
+        root = [UIApplication sharedApplication].windows.firstObject.rootViewController;
+    }
+    while (root.presentedViewController) {
+        root = root.presentedViewController;
+    }
+    return root;
+}
+
+@end
+
+static void SwizzleMethod(Class cls, SEL origSel, SEL swizzledSel) {
+    Method origMethod = class_getInstanceMethod(cls, origSel);
+    Method swizzledMethod = class_getInstanceMethod(cls, swizzledSel);
+    if (!origMethod || !swizzledMethod) {
+        return;
+    }
+    BOOL didAdd = class_addMethod(cls, origSel, method_getImplementation(swizzledMethod), method_getTypeEncoding(swizzledMethod));
+    if (didAdd) {
+        class_replaceMethod(cls, swizzledSel, method_getImplementation(origMethod), method_getTypeEncoding(origMethod));
+    } else {
+        method_exchangeImplementations(origMethod, swizzledMethod);
+    }
+}
+
+static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
+    Method origMethod = class_getClassMethod(cls, origSel);
+    Method swizzledMethod = class_getClassMethod(cls, swizzledSel);
+    if (!origMethod || !swizzledMethod) {
+        return;
+    }
+    Class metaClass = object_getClass((id)cls);
+    BOOL didAdd = class_addMethod(metaClass, origSel, method_getImplementation(swizzledMethod), method_getTypeEncoding(swizzledMethod));
+    if (didAdd) {
+        class_replaceMethod(metaClass, swizzledSel, method_getImplementation(origMethod), method_getTypeEncoding(origMethod));
+    } else {
+        method_exchangeImplementations(origMethod, swizzledMethod);
+    }
+}
+
+@interface AVPlayerItem (Sniffer)
+@end
+
+@implementation AVPlayerItem (Sniffer)
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL];
+}
+
+- (instancetype)sniff_initWithAsset:(AVAsset *)asset {
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *url = ((AVURLAsset *)asset).URL;
+        if (url) {
+            [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
+        }
+    }
+    return [self sniff_initWithAsset:asset];
+}
+
+@end
+
+@interface AVURLAsset (Sniffer)
+@end
+
+@implementation AVURLAsset (Sniffer)
+
++ (instancetype)sniff_URLAssetWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_URLAssetWithURL:URL options:options];
+}
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL options:options];
+}
+
+@end
+
+@interface NSURLSession (Sniffer)
+@end
+
+@implementation NSURLSession (Sniffer)
+
+- (NSURLSessionDataTask *)sniff_dataTaskWithRequest:(NSURLRequest *)request {
+    if (request.URL) {
+        [[SnifferManager sharedManager] addMediaUrl:request.URL.absoluteString];
+    }
+    return [self sniff_dataTaskWithRequest:request];
+}
+
+- (NSURLSessionDataTask *)sniff_dataTaskWithURL:(NSURL *)url {
+    if (url) {
+        [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
+    }
+    return [self sniff_dataTaskWithURL:url];
+}
+
+@end
+
+__attribute__((constructor)) static void SnifferInit(void) {
+    SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+    SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:), @selector(sniff_initWithAsset:));
+    SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
+    SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
+    SwizzleMethod([NSURLSession class], @selector(dataTaskWithRequest:), @selector(sniff_dataTaskWithRequest:));
+    SwizzleMethod([NSURLSession class], @selector(dataTaskWithURL:), @selector(sniff_dataTaskWithURL:));
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [[SnifferManager sharedManager] setupFloatingWindow];
+    });
+}
