@@ -46,7 +46,7 @@
             if (btn) {
                 CGFloat btnW = btn.frame.size.width;
                 CGFloat btnH = btn.frame.size.height;
-                CGFloat safeX = MIN(MAX(btn.frame.origin.x, 10), size.width - btnW - 10);
+                CGFloat safeX = MIN(MAX(btn.frame.origin.x, 12), size.width - btnW - 12);
                 CGFloat safeY = MIN(MAX(btn.frame.origin.y, 40), size.height - btnH - 40);
                 btn.frame = CGRectMake(safeX, safeY, btnW, btnH);
             }
@@ -154,8 +154,8 @@
             btn.contentEdgeInsets = UIEdgeInsetsMake(3, 8, 3, 8);
 
             if ([name isEqualToString:@"复制"]) {
-                btn.backgroundColor = [UIColor colorWithWhite:0.92 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithWhite:0.25 alpha:1.0] forState:UIControlStateNormal];
+                btn.backgroundColor = [UIColor colorWithRed:0.92 green:0.92 blue:0.94 alpha:1.0];
+                [btn setTitleColor:[UIColor colorWithRed:0.25 green:0.26 blue:0.28 alpha:1.0] forState:UIControlStateNormal];
             } else if ([name isEqualToString:@"Forward"]) {
                 btn.backgroundColor = [UIColor colorWithRed:0.86 green:0.94 blue:0.98 alpha:1.0];
                 [btn setTitleColor:[UIColor colorWithRed:0.05 green:0.45 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
@@ -209,11 +209,11 @@
 
         UIView *tintOverlay = [[UIView alloc] initWithFrame:self.bounds];
         tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.95 alpha:0.78];
+        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.95 alpha:0.8];
         [self addSubview:tintOverlay];
 
         UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 36)];
-        header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.35];
+        header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.4];
         [self addSubview:header];
 
         _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(14, 9, 140, 18)];
@@ -331,6 +331,7 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIApplicationDidBecomeActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeVisibleNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeKeyNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIDeviceOrientationDidChangeNotification object:nil];
     if (@available(iOS 13.0, *)) {
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UISceneDidActivateNotification object:nil];
     }
@@ -352,17 +353,19 @@
     }
 
     NSString *lower = [urlStr lowercaseString];
+    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
+    for (NSString *b in blackList) {
+        if ([lower containsString:b]) {
+            return;
+        }
+    }
+
     BOOL isMedia = NO;
-    NSArray *keys = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".mpd", @"m3u8?", @"mp4?", @"/playlist", @"/manifest"];
+    NSArray *keys = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".mpd", @".f4v", @".avi", @"m3u8?", @"mp4?", @"/playlist", @"/manifest", @"videoplayback", @"stream", @"video", @"live"];
     for (NSString *key in keys) {
         if ([lower containsString:key]) {
             isMedia = YES;
             break;
-        }
-    }
-    if (!isMedia) {
-        if ([lower containsString:@"m3u8"] || [lower containsString:@"googlevideo.com/videoplayback"]) {
-            isMedia = YES;
         }
     }
     if (!isMedia) {
@@ -428,7 +431,7 @@
             }
 
             self.overlayWindow.frame = [UIScreen mainScreen].bounds;
-            self.overlayWindow.windowLevel = 10000000.0;
+            self.overlayWindow.windowLevel = CGFLOAT_MAX - 100.0;
             self.overlayWindow.backgroundColor = [UIColor clearColor];
 
             SnifferRootViewController *rootVC = [[SnifferRootViewController alloc] init];
@@ -440,14 +443,18 @@
 
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
             btn.frame = CGRectMake(screenW - 96, screenH - 220, 86, 36);
-            btn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
+            btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.97 alpha:0.9];
             btn.layer.cornerRadius = 18;
             btn.layer.masksToBounds = YES;
             btn.layer.borderWidth = 0.5;
-            btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
+            btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
+            btn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.1].CGColor;
+            btn.layer.shadowOffset = CGSizeMake(0, 3);
+            btn.layer.shadowRadius = 6;
+            btn.layer.shadowOpacity = 1.0;
             btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
             [btn setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
-            [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [btn setTitleColor:[UIColor colorWithRed:0.2 green:0.22 blue:0.25 alpha:1.0] forState:UIControlStateNormal];
             [btn addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
 
             UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
@@ -488,7 +495,7 @@
         CGFloat btnW = btn.frame.size.width;
         CGFloat btnH = btn.frame.size.height;
 
-        CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 8) : (btnW / 2.0 + 8);
+        CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 10) : (btnW / 2.0 + 10);
         CGFloat targetY = MIN(MAX(center.y, 40 + btnH / 2.0), screenH - 40 - btnH / 2.0);
 
         [UIView animateWithDuration:0.25 animations:^{
@@ -566,6 +573,20 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
+@interface NSURLRequest (Sniffer)
+@end
+
+@implementation NSURLRequest (Sniffer)
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL cachePolicy:(NSURLRequestCachePolicy)cachePolicy timeoutInterval:(NSTimeInterval)timeoutInterval {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL cachePolicy:cachePolicy timeoutInterval:timeoutInterval];
+}
+
+@end
+
 @interface NSURLSessionTask (Sniffer)
 @end
 
@@ -594,7 +615,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
             function postUrl(u){\
                 if(!u||typeof u!=='string'||u.indexOf('blob:')===0||u.indexOf('data:')===0)return;\
                 var l=u.toLowerCase();\
-                if(l.indexOf('.m3u8')!==-1||l.indexOf('.mp4')!==-1||l.indexOf('.flv')!==-1||l.indexOf('.mov')!==-1||l.indexOf('.mkv')!==-1||l.indexOf('.mpd')!==-1||l.indexOf('m3u8')!==-1){\
+                if(l.indexOf('.m3u8')!==-1||l.indexOf('.mp4')!==-1||l.indexOf('.flv')!==-1||l.indexOf('.mov')!==-1||l.indexOf('.mkv')!==-1||l.indexOf('.mpd')!==-1||l.indexOf('m3u8')!==-1||l.indexOf('playlist')!==-1||l.indexOf('stream')!==-1){\
                     try{window.webkit.messageHandlers.SnifferBridge.postMessage(u);}catch(e){}\
                 }\
             }\
@@ -666,6 +687,16 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     return [self sniff_initWithURL:URL];
 }
 
+- (void)sniff_replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
+    if ([item.asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *url = ((AVURLAsset *)item.asset).URL;
+        if (url) {
+            [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
+        }
+    }
+    [self sniff_replaceCurrentItemWithPlayerItem:item];
+}
+
 @end
 
 @interface AVPlayerItem (Sniffer)
@@ -730,7 +761,34 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 @end
 
+@interface IJKMoviePlayerSniffer : NSObject
+@end
+
+@implementation IJKMoviePlayerSniffer
+
+- (instancetype)sniff_initWithContentURL:(NSURL *)aUrl {
+    if (aUrl) {
+        [[SnifferManager sharedManager] addMediaUrl:aUrl.absoluteString];
+    }
+    return [self sniff_initWithContentURL:aUrl];
+}
+
+- (instancetype)sniff_initWithContentURLString:(NSString *)aUrlStr {
+    if (aUrlStr) {
+        [[SnifferManager sharedManager] addMediaUrl:aUrlStr];
+    }
+    return [self sniff_initWithContentURLString:aUrlStr];
+}
+
+@end
+
 __attribute__((constructor)) static void SnifferInit(void) {
+    SwizzleMethod([NSURLRequest class], @selector(initWithURL:cachePolicy:timeoutInterval:), @selector(sniff_initWithURL:cachePolicy:timeoutInterval:));
+
+    Class taskCls = NSClassFromString(@"__NSCFURLSessionTask");
+    if (taskCls) {
+        SwizzleMethod(taskCls, @selector(resume), @selector(sniff_resume));
+    }
     SwizzleMethod([NSURLSessionTask class], @selector(resume), @selector(sniff_resume));
 
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
@@ -738,6 +796,7 @@ __attribute__((constructor)) static void SnifferInit(void) {
 
     SwizzleClassMethod([AVPlayer class], @selector(playerWithURL:), @selector(sniff_playerWithURL:));
     SwizzleMethod([AVPlayer class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+    SwizzleMethod([AVPlayer class], @selector(replaceCurrentItemWithPlayerItem:), @selector(sniff_replaceCurrentItemWithPlayerItem:));
 
     SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithURL:), @selector(sniff_playerItemWithURL:));
     SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:), @selector(sniff_playerItemWithAsset:));
@@ -746,6 +805,22 @@ __attribute__((constructor)) static void SnifferInit(void) {
 
     SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
     SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
+
+    Class ijkCls = NSClassFromString(@"IJKFFMoviePlayerController");
+    if (ijkCls) {
+        Method m1 = class_getInstanceMethod(ijkCls, @selector(initWithContentURL:));
+        Method s1 = class_getInstanceMethod([IJKMoviePlayerSniffer class], @selector(sniff_initWithContentURL:));
+        if (m1 && s1) {
+            class_addMethod(ijkCls, @selector(sniff_initWithContentURL:), method_getImplementation(s1), method_getTypeEncoding(s1));
+            SwizzleMethod(ijkCls, @selector(initWithContentURL:), @selector(sniff_initWithContentURL:));
+        }
+        Method m2 = class_getInstanceMethod(ijkCls, @selector(initWithContentURLString:));
+        Method s2 = class_getInstanceMethod([IJKMoviePlayerSniffer class], @selector(sniff_initWithContentURLString:));
+        if (m2 && s2) {
+            class_addMethod(ijkCls, @selector(sniff_initWithContentURLString:), method_getImplementation(s2), method_getTypeEncoding(s2));
+            SwizzleMethod(ijkCls, @selector(initWithContentURLString:), @selector(sniff_initWithContentURLString:));
+        }
+    }
 
     [[SnifferManager sharedManager] registerNotifications];
 }
