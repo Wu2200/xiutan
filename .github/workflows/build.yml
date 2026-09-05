@@ -18,10 +18,12 @@ jobs:
           xcrun -sdk iphoneos clang \
             -target arm64-apple-ios14.0 \
             -shared -dynamiclib \
+            -install_name @rpath/VideoSniffer.dylib \
             -fobjc-arc \
             -framework Foundation \
             -framework UIKit \
             -framework AVFoundation \
+            -framework CoreGraphics \
             -o VideoSniffer.dylib \
             VideoSniffer.m
 
