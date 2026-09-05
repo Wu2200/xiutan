@@ -21,14 +21,13 @@
 
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, copy) NSString *latestMediaUrl;
-@property (nonatomic, assign) NSInteger latestMediaScore;
-@property (nonatomic, assign) BOOL acceptsNextMediaUrl;
 @property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, weak) UIViewController *lastActiveVC;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
 @property (nonatomic, strong) NSArray<UIButton *> *playerButtons;
 + (instancetype)sharedManager;
++ (UIWindow *)hostKeyWindow;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
 - (void)clearMedia;
@@ -39,12 +38,31 @@
 @end
 
 @implementation SnifferRootViewController
+
 - (BOOL)shouldAutorotate {
-    return YES;
+    UIWindow *keyWin = [SnifferManager hostKeyWindow];
+    if (keyWin.rootViewController) {
+        return [keyWin.rootViewController shouldAutorotate];
+    }
+    return NO;
 }
+
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    return UIInterfaceOrientationMaskAll;
+    UIWindow *keyWin = [SnifferManager hostKeyWindow];
+    if (keyWin.rootViewController) {
+        return [keyWin.rootViewController supportedInterfaceOrientations];
+    }
+    return UIInterfaceOrientationMaskPortrait;
 }
+
+- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation {
+    UIWindow *keyWin = [SnifferManager hostKeyWindow];
+    if (keyWin.rootViewController) {
+        return [keyWin.rootViewController preferredInterfaceOrientationForPresentation];
+    }
+    return UIInterfaceOrientationPortrait;
+}
+
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
     [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
@@ -52,7 +70,6 @@
         if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
             CGFloat ratio = [[SnifferManager sharedManager] loadPositionRatio];
             CGFloat targetCenterY = ratio * size.height;
-
             UIView *container = win.buttonsContainer;
             if (container) {
                 CGFloat w = container.frame.size.width;
@@ -64,9 +81,11 @@
         }
     } completion:nil];
 }
+
 @end
 
 @implementation SnifferOverlayWindow
+
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     if (self.isSuspendedHidden || !self.buttonsContainer || self.buttonsContainer.hidden || self.buttonsContainer.alpha < 0.05) {
         return nil;
@@ -77,9 +96,11 @@
     }
     return nil;
 }
+
 @end
 
 @implementation SnifferScriptBridge
+
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
     if ([message.body isKindOfClass:[NSDictionary class]]) {
         NSString *url = message.body[@"url"];
@@ -90,6 +111,7 @@
         [[SnifferManager sharedManager] captureUrl:(NSString *)message.body];
     }
 }
+
 @end
 
 @implementation SnifferManager
@@ -99,11 +121,35 @@
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         inst = [[SnifferManager alloc] init];
-        inst.latestMediaScore = NSIntegerMin;
-        inst.acceptsNextMediaUrl = NO;
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
     });
     return inst;
+}
+
++ (UIWindow *)hostKeyWindow {
+    UIWindow *targetWindow = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *w in scene.windows) {
+                if (w != [SnifferManager sharedManager].overlayWindow && !w.hidden && w.isKeyWindow) {
+                    targetWindow = w;
+                    break;
+                }
+            }
+            if (!targetWindow) {
+                for (UIWindow *w in scene.windows) {
+                    if (w != [SnifferManager sharedManager].overlayWindow && !w.hidden) {
+                        targetWindow = w;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!targetWindow) {
+        targetWindow = [UIApplication sharedApplication].windows.firstObject;
+    }
+    return targetWindow;
 }
 
 - (void)savePositionRatio:(CGFloat)ratio {
@@ -123,7 +169,6 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIApplicationDidBecomeActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeVisibleNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeKeyNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIDeviceOrientationDidChangeNotification object:nil];
     if (@available(iOS 13.0, *)) {
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UISceneDidActivateNotification object:nil];
     }
@@ -139,20 +184,7 @@
 }
 
 - (void)attachGlobalToggleGesture {
-    UIWindow *targetWindow = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *w in scene.windows) {
-                if (w != self.overlayWindow && !w.hidden) {
-                    targetWindow = w;
-                    break;
-                }
-            }
-        }
-    }
-    if (!targetWindow) {
-        targetWindow = [UIApplication sharedApplication].windows.firstObject;
-    }
+    UIWindow *targetWindow = [SnifferManager hostKeyWindow];
     if (!targetWindow || targetWindow == self.overlayWindow) {
         return;
     }
@@ -233,42 +265,9 @@
     return NO;
 }
 
-- (NSInteger)mediaScoreForUrl:(NSString *)urlStr {
-    NSString *lower = [urlStr lowercaseString];
-    NSInteger score = 0;
-
-    if ([lower containsString:@".m3u8"] || [lower containsString:@"m3u8?"]) {
-        score += 1000;
-    } else if ([lower containsString:@".mpd"] || [lower containsString:@"manifest"]) {
-        score += 900;
-    } else if ([lower containsString:@".mp4"] || [lower containsString:@"videoplayback"]) {
-        score += 800;
-    } else {
-        score += 500;
-    }
-
-    if ([lower containsString:@"2160"] || [lower containsString:@"4k"] || [lower containsString:@"uhd"]) {
-        score += 500;
-    } else if ([lower containsString:@"1440"] || [lower containsString:@"2k"]) {
-        score += 400;
-    } else if ([lower containsString:@"1080"]) {
-        score += 300;
-    } else if ([lower containsString:@"720"]) {
-        score += 200;
-    } else if ([lower containsString:@"540"]) {
-        score += 150;
-    } else if ([lower containsString:@"480"]) {
-        score += 100;
-    } else if ([lower containsString:@"360"]) {
-        score += 50;
-    }
-
-    return score;
-}
-
 - (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
-    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
+    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf", @".json", @".html"];
     for (NSString *b in blackList) {
         if ([lower containsString:b]) {
             return NO;
@@ -279,7 +278,7 @@
         return NO;
     }
 
-    NSArray *keys = @[@"m3u8", @"mp4", @"flv", @"mov", @"mkv", @"webm", @"mpd", @"f4v", @"avi", @"playlist", @"manifest", @"videoplayback", @"stream", @"video", @"live", @"vod", @"media", @"playurl", @"play_url", @"video_url"];
+    NSArray *keys = @[@"m3u8", @"mp4", @"flv", @"mov", @"mkv", @"webm", @"mpd", @"f4v", @"avi", @"playlist", @"manifest", @"videoplayback", @"stream", @"playurl", @"play_url", @"video_url"];
     for (NSString *key in keys) {
         if ([lower containsString:key]) {
             return YES;
@@ -322,27 +321,11 @@
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSInteger incomingScore = [self mediaScoreForUrl:urlStr];
-        BOOL urlChanged = ![self.latestMediaUrl isEqualToString:urlStr];
-        BOOL shouldReplace = NO;
-
-        if (!self.latestMediaUrl || self.latestMediaUrl.length == 0) {
-            shouldReplace = YES;
-        } else if (self.acceptsNextMediaUrl) {
-            shouldReplace = YES;
-        } else if (incomingScore > self.latestMediaScore) {
-            shouldReplace = YES;
-        } else if (incomingScore == self.latestMediaScore && urlChanged) {
-            shouldReplace = YES;
-        }
-
-        if (!shouldReplace) {
+        if (self.latestMediaUrl && [self.latestMediaUrl isEqualToString:urlStr]) {
             return;
         }
 
         self.latestMediaUrl = urlStr;
-        self.latestMediaScore = incomingScore;
-        self.acceptsNextMediaUrl = NO;
 
         if (!self.overlayWindow) {
             [self setupFloatingUI];
@@ -358,8 +341,6 @@
 
 - (void)clearMedia {
     self.latestMediaUrl = nil;
-    self.latestMediaScore = NSIntegerMin;
-    self.acceptsNextMediaUrl = NO;
     [self hideButtonsWithAnimation];
 }
 
@@ -512,8 +493,7 @@
     UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [feedback impactOccurred];
 
-    self.acceptsNextMediaUrl = YES;
-    self.latestMediaScore = NSIntegerMin;
+    self.latestMediaUrl = nil;
     [self rotateRefreshIcon];
 }
 
