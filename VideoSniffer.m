@@ -10,6 +10,7 @@
 
 @interface SnifferMediaModel : NSObject
 @property (nonatomic, copy) NSString *url;
+@property (nonatomic, assign) BOOL isMedia;
 @end
 
 @implementation SnifferMediaModel
@@ -47,6 +48,7 @@
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
+- (void)importFromClipboard;
 - (void)setupFloatingUI;
 - (void)clearMedia;
 - (void)registerNotifications;
@@ -424,7 +426,7 @@
             return NO;
         }
     }
-    NSArray *keys = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".mpd", @".f4v", @".avi", @".ts", @"m3u8?", @"mp4?", @"/playlist", @"/manifest", @"videoplayback", @"stream", @"video", @"live"];
+    NSArray *keys = @[@"m3u8", @"mp4", @"flv", @"mov", @"mkv", @"webm", @"mpd", @"f4v", @"avi", @"ts", @"playlist", @"manifest", @"videoplayback", @"stream", @"video", @"live", @"vod", @"media", @"play"];
     for (NSString *key in keys) {
         if ([lower containsString:key]) {
             return YES;
@@ -446,8 +448,9 @@
             [self.allSet addObject:urlStr];
             SnifferMediaModel *m = [[SnifferMediaModel alloc] init];
             m.url = urlStr;
+            m.isMedia = [self isMediaUrl:urlStr];
             [self.allList insertObject:m atIndex:0];
-            if (self.allList.count > 150) {
+            if (self.allList.count > 200) {
                 SnifferMediaModel *old = self.allList.lastObject;
                 if (old.url) {
                     [self.allSet removeObject:old.url];
@@ -460,6 +463,7 @@
             [self.mediaSet addObject:urlStr];
             SnifferMediaModel *m = [[SnifferMediaModel alloc] init];
             m.url = urlStr;
+            m.isMedia = YES;
             [self.mediaList insertObject:m atIndex:0];
         }
 
@@ -467,7 +471,7 @@
             [self setupFloatingUI];
         }
 
-        NSString *title = [NSString stringWithFormat:@"🎬 嗅探 %lu", (unsigned long)self.mediaList.count];
+        NSString *title = [NSString stringWithFormat:@"🎬 %lu/%lu", (unsigned long)self.mediaList.count, (unsigned long)self.allList.count];
         [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
 
         if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
@@ -481,7 +485,7 @@
     [self.mediaSet removeAllObjects];
     [self.allList removeAllObjects];
     [self.allSet removeAllObjects];
-    [self.overlayWindow.floatingButton setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
+    [self.overlayWindow.floatingButton setTitle:@"🎬 0/0" forState:UIControlStateNormal];
 }
 
 - (void)setupFloatingUI {
@@ -525,14 +529,14 @@
             CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
 
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-            btn.frame = CGRectMake(screenW - 96, screenH - 220, 86, 36);
-            btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.97 alpha:0.9];
+            btn.frame = CGRectMake(screenW - 102, screenH - 220, 92, 36);
+            btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.97 alpha:0.92];
             btn.layer.cornerRadius = 18;
             btn.layer.masksToBounds = YES;
             btn.layer.borderWidth = 0.5;
             btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
             btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-            [btn setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
+            [btn setTitle:@"🎬 0/0" forState:UIControlStateNormal];
             [btn setTitleColor:[UIColor colorWithRed:0.2 green:0.22 blue:0.25 alpha:1.0] forState:UIControlStateNormal];
             [btn addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
 
@@ -691,11 +695,46 @@ static void InjectSnifferProtocol(NSURLSessionConfiguration *config) {
 
 @implementation NSURLSession (SnifferHook)
 
++ (NSURLSession *)sniff_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration {
+    if (configuration) {
+        InjectSnifferProtocol(configuration);
+    }
+    return [self sniff_sessionWithConfiguration:configuration];
+}
+
 + (NSURLSession *)sniff_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
     if (configuration) {
         InjectSnifferProtocol(configuration);
     }
     return [self sniff_sessionWithConfiguration:configuration delegate:delegate delegateQueue:queue];
+}
+
+@end
+
+@interface NSURLRequest (SnifferAll)
+@end
+
+@implementation NSURLRequest (SnifferAll)
+
++ (instancetype)sniff_requestWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_requestWithURL:URL];
+}
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL];
+}
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL cachePolicy:(NSURLRequestCachePolicy)cachePolicy timeoutInterval:(NSTimeInterval)timeoutInterval {
+    if (URL) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL cachePolicy:cachePolicy timeoutInterval:timeoutInterval];
 }
 
 @end
@@ -727,7 +766,7 @@ static void InjectSnifferProtocol(NSURLSessionConfiguration *config) {
                 }catch(e){}\
             }\
             check();\
-            setInterval(check,1000);\
+            setInterval(check,800);\
             var origOpen=XMLHttpRequest.prototype.open;\
             XMLHttpRequest.prototype.open=function(m,u){\
                 postUrl(u);\
@@ -991,7 +1030,12 @@ __attribute__((constructor)) static void SnifferInit(void) {
 
     SwizzleClassMethod([NSURLSessionConfiguration class], @selector(defaultSessionConfiguration), @selector(sniff_defaultSessionConfiguration));
     SwizzleClassMethod([NSURLSessionConfiguration class], @selector(ephemeralSessionConfiguration), @selector(sniff_ephemeralSessionConfiguration));
+    SwizzleClassMethod([NSURLSession class], @selector(sessionWithConfiguration:), @selector(sniff_sessionWithConfiguration:));
     SwizzleClassMethod([NSURLSession class], @selector(sessionWithConfiguration:delegate:delegateQueue:), @selector(sniff_sessionWithConfiguration:delegate:delegateQueue:));
+
+    SwizzleClassMethod([NSURLRequest class], @selector(requestWithURL:), @selector(sniff_requestWithURL:));
+    SwizzleMethod([NSURLRequest class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+    SwizzleMethod([NSURLRequest class], @selector(initWithURL:cachePolicy:timeoutInterval:), @selector(sniff_initWithURL:cachePolicy:timeoutInterval:));
 
     Class browsingContextCls = NSClassFromString(@"WKBrowsingContextController");
     SEL registerSchemeSel = NSSelectorFromString(@"registerSchemeForCustomProtocol:");
