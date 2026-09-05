@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <WebKit/WebKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 
@@ -11,13 +12,34 @@
 @implementation SnifferMediaModel
 @end
 
+@interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
+@end
+
+@interface SnifferMiniPanelView : UIView <UITableViewDelegate, UITableViewDataSource>
+@property (nonatomic, strong) UITableView *tableView;
+@property (nonatomic, strong) UILabel *emptyLabel;
+@property (nonatomic, strong) UILabel *titleLabel;
+- (void)refreshList;
+@end
+
 @interface SnifferOverlayWindow : UIWindow
+@property (nonatomic, strong) SnifferMiniPanelView *panelView;
+@property (nonatomic, strong) UIButton *floatingButton;
 @end
 
 @implementation SnifferOverlayWindow
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.rootViewController.presentedViewController) {
-        return [super hitTest:point withEvent:event];
+    if (self.panelView && !self.panelView.hidden) {
+        CGPoint panelPoint = [self convertPoint:point toView:self.panelView];
+        if ([self.panelView pointInside:panelPoint withEvent:event]) {
+            return [super hitTest:point withEvent:event];
+        }
+        CGPoint btnPoint = [self convertPoint:point toView:self.floatingButton];
+        if ([self.floatingButton pointInside:btnPoint withEvent:event]) {
+            return [super hitTest:point withEvent:event];
+        }
+        self.panelView.hidden = YES;
+        return nil;
     }
     UIView *view = [super hitTest:point withEvent:event];
     if (view == self || view == self.rootViewController.view) {
@@ -31,175 +53,190 @@
 @property (nonatomic, strong) NSMutableArray<SnifferMediaModel *> *mediaList;
 @property (nonatomic, strong) NSMutableSet<NSString *> *urlSet;
 @property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
-@property (nonatomic, strong) UIButton *floatingButton;
+@property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 + (instancetype)sharedManager;
 - (void)addMediaUrl:(NSString *)urlStr;
-- (void)setupFloatingWindow;
+- (void)setupFloatingUI;
 - (void)clearMedia;
 - (void)registerNotifications;
 @end
 
-@interface SnifferMediaCell : UITableViewCell
-@property (nonatomic, strong) UILabel *titleLabel;
-@property (nonatomic, strong) UILabel *urlLabel;
-@property (nonatomic, strong) UIScrollView *buttonScrollView;
-@property (nonatomic, strong) UIStackView *buttonStackView;
-@property (nonatomic, copy) void (^actionHandler)(NSString *actionType);
-- (void)configureWithModel:(SnifferMediaModel *)model index:(NSInteger)index;
+@implementation SnifferScriptBridge
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.body isKindOfClass:[NSString class]]) {
+        [[SnifferManager sharedManager] addMediaUrl:(NSString *)message.body];
+    } else if ([message.body isKindOfClass:[NSDictionary class]]) {
+        NSString *url = message.body[@"url"];
+        if (url) {
+            [[SnifferManager sharedManager] addMediaUrl:url];
+        }
+    }
+}
 @end
 
-@implementation SnifferMediaCell
+@interface SnifferMiniCell : UITableViewCell
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UILabel *urlLabel;
+@property (nonatomic, strong) UIScrollView *btnScrollView;
+@property (nonatomic, strong) UIStackView *btnStack;
+@property (nonatomic, copy) void (^actionBlock)(NSString *name);
+- (void)updateWithModel:(SnifferMediaModel *)model index:(NSInteger)index;
+@end
+
+@implementation SnifferMiniCell
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
     if (self) {
-        self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [UIColor clearColor];
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
 
-        _titleLabel = [[UILabel alloc] init];
-        _titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        _titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        _titleLabel.textColor = [UIColor labelColor];
+        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, 290, 16)];
+        _titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        _titleLabel.textColor = [UIColor whiteColor];
 
-        _urlLabel = [[UILabel alloc] init];
-        _urlLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        _urlLabel.font = [UIFont systemFontOfSize:11];
-        _urlLabel.textColor = [UIColor secondaryLabelColor];
-        _urlLabel.numberOfLines = 2;
-        _urlLabel.lineBreakMode = NSLineBreakByCharWrapping;
+        _urlLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 23, 290, 14)];
+        _urlLabel.font = [UIFont systemFontOfSize:10];
+        _urlLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
+        _urlLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
 
-        _buttonScrollView = [[UIScrollView alloc] init];
-        _buttonScrollView.translatesAutoresizingMaskIntoConstraints = NO;
-        _buttonScrollView.showsHorizontalScrollIndicator = NO;
+        _btnScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(10, 40, 290, 24)];
+        _btnScrollView.showsHorizontalScrollIndicator = NO;
 
-        _buttonStackView = [[UIStackView alloc] init];
-        _buttonStackView.translatesAutoresizingMaskIntoConstraints = NO;
-        _buttonStackView.axis = UILayoutConstraintAxisHorizontal;
-        _buttonStackView.spacing = 8;
-        _buttonStackView.alignment = UIStackViewAlignmentCenter;
+        _btnStack = [[UIStackView alloc] initWithFrame:_btnScrollView.bounds];
+        _btnStack.axis = UILayoutConstraintAxisHorizontal;
+        _btnStack.spacing = 6;
+        _btnStack.alignment = UIStackViewAlignmentCenter;
 
-        [_buttonScrollView addSubview:_buttonStackView];
+        [_btnScrollView addSubview:_btnStack];
         [self.contentView addSubview:_titleLabel];
         [self.contentView addSubview:_urlLabel];
-        [self.contentView addSubview:_buttonScrollView];
+        [self.contentView addSubview:_btnScrollView];
 
-        [NSLayoutConstraint activateConstraints:@[
-            [_titleLabel.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:10],
-            [_titleLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:15],
-            [_titleLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-15],
-
-            [_urlLabel.topAnchor constraintEqualToAnchor:_titleLabel.bottomAnchor constant:4],
-            [_urlLabel.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:15],
-            [_urlLabel.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-15],
-
-            [_buttonScrollView.topAnchor constraintEqualToAnchor:_urlLabel.bottomAnchor constant:8],
-            [_buttonScrollView.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:15],
-            [_buttonScrollView.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-15],
-            [_buttonScrollView.heightAnchor constraintEqualToConstant:32],
-            [_buttonScrollView.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-10],
-
-            [_buttonStackView.topAnchor constraintEqualToAnchor:_buttonScrollView.topAnchor],
-            [_buttonStackView.bottomAnchor constraintEqualToAnchor:_buttonScrollView.bottomAnchor],
-            [_buttonStackView.leadingAnchor constraintEqualToAnchor:_buttonScrollView.leadingAnchor],
-            [_buttonStackView.trailingAnchor constraintEqualToAnchor:_buttonScrollView.trailingAnchor],
-            [_buttonStackView.heightAnchor constraintEqualToAnchor:_buttonScrollView.heightAnchor]
-        ]];
-
-        NSArray *btnTitles = @[@"复制", @"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
-        for (NSString *title in btnTitles) {
-            UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-            [btn setTitle:title forState:UIControlStateNormal];
-            btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-            btn.layer.cornerRadius = 6;
+        NSArray *names = @[@"复制", @"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
+        for (NSString *name in names) {
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+            [btn setTitle:name forState:UIControlStateNormal];
+            btn.titleLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+            btn.layer.cornerRadius = 4;
             btn.layer.masksToBounds = YES;
-            btn.contentEdgeInsets = UIEdgeInsetsMake(5, 10, 5, 10);
+            btn.contentEdgeInsets = UIEdgeInsetsMake(3, 7, 3, 7);
 
-            if ([title isEqualToString:@"复制"]) {
-                btn.backgroundColor = [UIColor systemGray5Color];
-                [btn setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
-            } else if ([title isEqualToString:@"Forward"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.88 green:0.97 blue:0.98 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.0 green:0.48 blue:0.76 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([title isEqualToString:@"Fileball"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.91 green:0.96 blue:0.91 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.18 green:0.49 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([title isEqualToString:@"Infuse"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.95 green:0.90 blue:0.96 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.42 green:0.11 blue:0.6 alpha:1.0] forState:UIControlStateNormal];
-            } else if ([title isEqualToString:@"SenPlayer"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.91 green:0.92 blue:0.96 alpha:1.0];
-                [btn setTitleColor:[UIColor colorWithRed:0.25 green:0.32 blue:0.71 alpha:1.0] forState:UIControlStateNormal];
+            if ([name isEqualToString:@"复制"]) {
+                btn.backgroundColor = [UIColor colorWithWhite:0.25 alpha:0.8];
+                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            } else if ([name isEqualToString:@"Forward"]) {
+                btn.backgroundColor = [UIColor colorWithRed:0.0 green:0.55 blue:0.8 alpha:0.8];
+                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            } else if ([name isEqualToString:@"Fileball"]) {
+                btn.backgroundColor = [UIColor colorWithRed:0.18 green:0.6 blue:0.25 alpha:0.8];
+                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            } else if ([name isEqualToString:@"Infuse"]) {
+                btn.backgroundColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.7 alpha:0.8];
+                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            } else if ([name isEqualToString:@"SenPlayer"]) {
+                btn.backgroundColor = [UIColor colorWithRed:0.3 green:0.4 blue:0.85 alpha:0.8];
+                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
             }
 
-            [btn addTarget:self action:@selector(buttonClicked:) forControlEvents:UIControlEventTouchUpInside];
-            [_buttonStackView addArrangedSubview:btn];
+            [btn addTarget:self action:@selector(btnTap:) forControlEvents:UIControlEventTouchUpInside];
+            [_btnStack addArrangedSubview:btn];
         }
     }
     return self;
 }
 
-- (void)buttonClicked:(UIButton *)sender {
-    if (self.actionHandler) {
-        self.actionHandler(sender.currentTitle);
+- (void)btnTap:(UIButton *)btn {
+    if (self.actionBlock) {
+        self.actionBlock(btn.currentTitle);
     }
 }
 
-- (void)configureWithModel:(SnifferMediaModel *)model index:(NSInteger)index {
-    self.titleLabel.text = [NSString stringWithFormat:@"媒体资源 %ld", (long)(index + 1)];
+- (void)updateWithModel:(SnifferMediaModel *)model index:(NSInteger)index {
+    self.titleLabel.text = [NSString stringWithFormat:@"资源 %ld", (long)(index + 1)];
     self.urlLabel.text = model.url;
 }
 
 @end
 
-@interface SnifferListViewController : UIViewController <UITableViewDelegate, UITableViewDataSource>
-@property (nonatomic, strong) UITableView *tableView;
-@property (nonatomic, strong) UILabel *emptyLabel;
-@end
+@implementation SnifferMiniPanelView
 
-@implementation SnifferListViewController
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [UIColor clearColor];
+        self.layer.cornerRadius = 14;
+        self.layer.masksToBounds = YES;
+        self.layer.borderWidth = 0.5;
+        self.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
 
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
-    self.title = @"嗅探媒体列表";
+        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+        UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+        blurView.frame = self.bounds;
+        blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self addSubview:blurView];
 
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeAction)];
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"清空" style:UIBarButtonItemStylePlain target:self action:@selector(clearAction)];
+        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 34)];
+        header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.05];
+        [self addSubview:header];
 
-    _tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
-    _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tableView.delegate = self;
-    _tableView.dataSource = self;
-    _tableView.estimatedRowHeight = 90;
-    _tableView.rowHeight = UITableViewAutomaticDimension;
-    [_tableView registerClass:[SnifferMediaCell class] forCellReuseIdentifier:@"SnifferCell"];
-    [self.view addSubview:_tableView];
+        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, 140, 18)];
+        _titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        _titleLabel.textColor = [UIColor whiteColor];
+        _titleLabel.text = @"嗅探资源";
+        [header addSubview:_titleLabel];
 
-    _emptyLabel = [[UILabel alloc] initWithFrame:self.view.bounds];
-    _emptyLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _emptyLabel.textAlignment = NSTextAlignmentCenter;
-    _emptyLabel.textColor = [UIColor secondaryLabelColor];
-    _emptyLabel.font = [UIFont systemFontOfSize:14];
-    _emptyLabel.text = @"暂未嗅探到有效流媒体链接";
-    [self.view addSubview:_emptyLabel];
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        closeBtn.frame = CGRectMake(frame.size.width - 46, 5, 40, 24);
+        [closeBtn setTitle:@"关闭" forState:UIControlStateNormal];
+        closeBtn.titleLabel.font = [UIFont systemFontOfSize:11];
+        [closeBtn setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+        [closeBtn addTarget:self action:@selector(closeTap) forControlEvents:UIControlEventTouchUpInside];
+        [header addSubview:closeBtn];
 
-    [self updateState];
+        UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        clearBtn.frame = CGRectMake(frame.size.width - 92, 5, 40, 24);
+        [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
+        clearBtn.titleLabel.font = [UIFont systemFontOfSize:11];
+        [clearBtn setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+        [clearBtn addTarget:self action:@selector(clearTap) forControlEvents:UIControlEventTouchUpInside];
+        [header addSubview:clearBtn];
+
+        _tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 34, frame.size.width, frame.size.height - 34) style:UITableViewStylePlain];
+        _tableView.backgroundColor = [UIColor clearColor];
+        _tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.1];
+        _tableView.delegate = self;
+        _tableView.dataSource = self;
+        _tableView.rowHeight = 70;
+        [_tableView registerClass:[SnifferMiniCell class] forCellReuseIdentifier:@"Cell"];
+        [self addSubview:_tableView];
+
+        _emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 70, frame.size.width, 40)];
+        _emptyLabel.textAlignment = NSTextAlignmentCenter;
+        _emptyLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+        _emptyLabel.font = [UIFont systemFontOfSize:11];
+        _emptyLabel.text = @"暂无嗅探资源";
+        [self addSubview:_emptyLabel];
+
+        [self refreshList];
+    }
+    return self;
 }
 
-- (void)updateState {
-    BOOL isEmpty = [SnifferManager sharedManager].mediaList.count == 0;
-    self.emptyLabel.hidden = !isEmpty;
-    self.tableView.hidden = isEmpty;
-    [self.tableView reloadData];
+- (void)closeTap {
+    self.hidden = YES;
 }
 
-- (void)closeAction {
-    [self dismissViewControllerAnimated:YES completion:nil];
-}
-
-- (void)clearAction {
+- (void)clearTap {
     [[SnifferManager sharedManager] clearMedia];
-    [self updateState];
+    [self refreshList];
+}
+
+- (void)refreshList {
+    BOOL empty = ([SnifferManager sharedManager].mediaList.count == 0);
+    self.emptyLabel.hidden = !empty;
+    self.tableView.hidden = empty;
+    [self.tableView reloadData];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -207,45 +244,35 @@
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    SnifferMediaCell *cell = [tableView dequeueReusableCellWithIdentifier:@"SnifferCell" forIndexPath:indexPath];
+    SnifferMiniCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell" forIndexPath:indexPath];
     SnifferMediaModel *model = [SnifferManager sharedManager].mediaList[indexPath.row];
-    [cell configureWithModel:model index:indexPath.row];
+    [cell updateWithModel:model index:indexPath.row];
 
-    __weak typeof(self) weakSelf = self;
-    cell.actionHandler = ^(NSString *actionType) {
-        [weakSelf handleAction:actionType url:model.url];
+    cell.actionBlock = ^(NSString *actionName) {
+        if ([actionName isEqualToString:@"复制"]) {
+            [UIPasteboard generalPasteboard].string = model.url;
+            return;
+        }
+
+        NSString *encoded = [model.url stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+        NSString *scheme = nil;
+
+        if ([actionName isEqualToString:@"Forward"]) {
+            scheme = [NSString stringWithFormat:@"forward://play?url=%@", encoded];
+        } else if ([actionName isEqualToString:@"Fileball"]) {
+            scheme = [NSString stringWithFormat:@"filebox://play?url=%@", encoded];
+        } else if ([actionName isEqualToString:@"Infuse"]) {
+            scheme = [NSString stringWithFormat:@"infuse://x-callback-url/play?url=%@", encoded];
+        } else if ([actionName isEqualToString:@"SenPlayer"]) {
+            scheme = [NSString stringWithFormat:@"senplayer://x-callback-url/play?url=%@", encoded];
+        }
+
+        if (scheme) {
+            [[UIApplication sharedApplication] openURL:[NSURL URLWithString:scheme] options:@{} completionHandler:nil];
+        }
     };
+
     return cell;
-}
-
-- (void)handleAction:(NSString *)actionType url:(NSString *)urlStr {
-    if ([actionType isEqualToString:@"复制"]) {
-        [UIPasteboard generalPasteboard].string = urlStr;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"提示" message:@"链接已复制到剪贴板" preferredStyle:UIAlertControllerStyleAlert];
-        [self presentViewController:alert animated:YES completion:nil];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
-        });
-        return;
-    }
-
-    NSString *encodedUrl = [urlStr stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-    NSString *scheme = nil;
-
-    if ([actionType isEqualToString:@"Forward"]) {
-        scheme = [NSString stringWithFormat:@"forward://play?url=%@", encodedUrl];
-    } else if ([actionType isEqualToString:@"Fileball"]) {
-        scheme = [NSString stringWithFormat:@"filebox://play?url=%@", encodedUrl];
-    } else if ([actionType isEqualToString:@"Infuse"]) {
-        scheme = [NSString stringWithFormat:@"infuse://x-callback-url/play?url=%@", encodedUrl];
-    } else if ([actionType isEqualToString:@"SenPlayer"]) {
-        scheme = [NSString stringWithFormat:@"senplayer://x-callback-url/play?url=%@", encodedUrl];
-    }
-
-    if (scheme) {
-        NSURL *targetUrl = [NSURL URLWithString:scheme];
-        [[UIApplication sharedApplication] openURL:targetUrl options:@{} completionHandler:nil];
-    }
 }
 
 @end
@@ -253,47 +280,55 @@
 @implementation SnifferManager
 
 + (instancetype)sharedManager {
-    static SnifferManager *instance = nil;
+    static SnifferManager *inst = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        instance = [[SnifferManager alloc] init];
-        instance.mediaList = [NSMutableArray array];
-        instance.urlSet = [NSMutableSet set];
+        inst = [[SnifferManager alloc] init];
+        inst.mediaList = [NSMutableArray array];
+        inst.urlSet = [NSMutableSet set];
+        inst.scriptBridge = [[SnifferScriptBridge alloc] init];
     });
-    return instance;
+    return inst;
 }
 
 - (void)registerNotifications {
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIApplicationDidBecomeActiveNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIWindowDidBecomeVisibleNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UIWindowDidBecomeKeyNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeVisibleNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeKeyNotification object:nil];
     if (@available(iOS 13.0, *)) {
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(lifecycleNotificationTriggered:) name:UISceneDidActivateNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UISceneDidActivateNotification object:nil];
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self setupFloatingWindow];
+        [self setupFloatingUI];
     });
 }
 
-- (void)lifecycleNotificationTriggered:(NSNotification *)notification {
-    [self setupFloatingWindow];
+- (void)onActive {
+    [self setupFloatingUI];
 }
 
 - (void)addMediaUrl:(NSString *)urlStr {
-    if (!urlStr || urlStr.length == 0 || [urlStr hasPrefix:@"blob:"]) {
+    if (!urlStr || ![urlStr isKindOfClass:[NSString class]] || urlStr.length == 0) {
+        return;
+    }
+    if ([urlStr hasPrefix:@"blob:"] || [urlStr hasPrefix:@"data:"]) {
         return;
     }
 
     NSString *lower = [urlStr lowercaseString];
     BOOL isMedia = NO;
-    NSArray *extensions = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".ts", @".mp3", @".m4a", @".aac"];
-    for (NSString *ext in extensions) {
-        if ([lower containsString:ext]) {
+    NSArray *keys = @[@".m3u8", @".mp4", @".flv", @".mov", @".mkv", @".webm", @".mpd", @"m3u8?", @"mp4?", @"/playlist", @"/manifest"];
+    for (NSString *key in keys) {
+        if ([lower containsString:key]) {
             isMedia = YES;
             break;
         }
     }
-
+    if (!isMedia) {
+        if ([lower containsString:@"m3u8"] || [lower containsString:@"googlevideo.com"]) {
+            isMedia = YES;
+        }
+    }
     if (!isMedia) {
         return;
     }
@@ -302,40 +337,44 @@
         if ([self.urlSet containsObject:urlStr]) {
             return;
         }
-
         [self.urlSet addObject:urlStr];
+
         SnifferMediaModel *model = [[SnifferMediaModel alloc] init];
         model.url = urlStr;
         [self.mediaList insertObject:model atIndex:0];
 
         if (!self.overlayWindow) {
-            [self setupFloatingWindow];
+            [self setupFloatingUI];
         }
 
-        NSString *btnTitle = [NSString stringWithFormat:@"嗅探 %lu", (unsigned long)self.mediaList.count];
-        [self.floatingButton setTitle:btnTitle forState:UIControlStateNormal];
+        NSString *title = [NSString stringWithFormat:@"🎬 嗅探 %lu", (unsigned long)self.mediaList.count];
+        [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
+
+        if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
+            [self.overlayWindow.panelView refreshList];
+        }
     });
 }
 
 - (void)clearMedia {
     [self.mediaList removeAllObjects];
     [self.urlSet removeAllObjects];
-    [self.floatingButton setTitle:@"嗅探 0" forState:UIControlStateNormal];
+    [self.overlayWindow.floatingButton setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
 }
 
-- (void)setupFloatingWindow {
+- (void)setupFloatingUI {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindowScene *activeScene = nil;
+        UIWindowScene *scene = nil;
         if (@available(iOS 13.0, *)) {
-            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    UIWindowScene *ws = (UIWindowScene *)scene;
+            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+                if ([s isKindOfClass:[UIWindowScene class]]) {
+                    UIWindowScene *ws = (UIWindowScene *)s;
                     if (ws.activationState == UISceneActivationStateForegroundActive) {
-                        activeScene = ws;
+                        scene = ws;
                         break;
                     }
-                    if (!activeScene) {
-                        activeScene = ws;
+                    if (!scene) {
+                        scene = ws;
                     }
                 }
             }
@@ -343,8 +382,8 @@
 
         if (!self.overlayWindow) {
             if (@available(iOS 13.0, *)) {
-                if (activeScene) {
-                    self.overlayWindow = [[SnifferOverlayWindow alloc] initWithWindowScene:activeScene];
+                if (scene) {
+                    self.overlayWindow = [[SnifferOverlayWindow alloc] initWithWindowScene:scene];
                 } else {
                     self.overlayWindow = [[SnifferOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
                 }
@@ -363,24 +402,32 @@
             CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
             CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
 
-            self.floatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
-            self.floatingButton.frame = CGRectMake(screenW - 85, screenH - 220, 75, 36);
-            self.floatingButton.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:1.0 alpha:0.85];
-            self.floatingButton.layer.cornerRadius = 18;
-            self.floatingButton.layer.masksToBounds = YES;
-            self.floatingButton.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-            [self.floatingButton setTitle:@"嗅探 0" forState:UIControlStateNormal];
-            [self.floatingButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            [self.floatingButton addTarget:self action:@selector(openPanel) forControlEvents:UIControlEventTouchUpInside];
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+            btn.frame = CGRectMake(screenW - 96, screenH - 220, 86, 36);
+            btn.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
+            btn.layer.cornerRadius = 18;
+            btn.layer.masksToBounds = YES;
+            btn.layer.borderWidth = 0.5;
+            btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
+            btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+            [btn setTitle:@"🎬 嗅探 0" forState:UIControlStateNormal];
+            [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [btn addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
 
-            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-            [self.floatingButton addGestureRecognizer:pan];
+            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
+            [btn addGestureRecognizer:pan];
 
-            [rootVC.view addSubview:self.floatingButton];
+            self.overlayWindow.floatingButton = btn;
+            [rootVC.view addSubview:btn];
+
+            SnifferMiniPanelView *panel = [[SnifferMiniPanelView alloc] initWithFrame:CGRectMake(screenW - 322, screenH - 470, 312, 240)];
+            panel.hidden = YES;
+            self.overlayWindow.panelView = panel;
+            [rootVC.view addSubview:panel];
         } else {
             if (@available(iOS 13.0, *)) {
-                if (activeScene && self.overlayWindow.windowScene != activeScene) {
-                    self.overlayWindow.windowScene = activeScene;
+                if (scene && self.overlayWindow.windowScene != scene) {
+                    self.overlayWindow.windowScene = scene;
                 }
             }
         }
@@ -389,8 +436,8 @@
     });
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIView *btn = self.floatingButton;
+- (void)onPan:(UIPanGestureRecognizer *)pan {
+    UIView *btn = self.overlayWindow.floatingButton;
     UIView *superView = btn.superview;
     CGPoint translation = [pan translationInView:superView];
     CGPoint center = btn.center;
@@ -405,7 +452,7 @@
         CGFloat btnW = btn.frame.size.width;
         CGFloat btnH = btn.frame.size.height;
 
-        CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 10) : (btnW / 2.0 + 10);
+        CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 8) : (btnW / 2.0 + 8);
         CGFloat targetY = MIN(MAX(center.y, 60 + btnH / 2.0), screenH - 60 - btnH / 2.0);
 
         [UIView animateWithDuration:0.25 animations:^{
@@ -414,11 +461,42 @@
     }
 }
 
-- (void)openPanel {
-    SnifferListViewController *listVC = [[SnifferListViewController alloc] init];
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:listVC];
-    nav.modalPresentationStyle = UIModalPresentationPageSheet;
-    [self.overlayWindow.rootViewController presentViewController:nav animated:YES completion:nil];
+- (void)togglePanel {
+    SnifferMiniPanelView *panel = self.overlayWindow.panelView;
+    if (!panel) {
+        return;
+    }
+
+    if (panel.hidden) {
+        CGRect btnFrame = self.overlayWindow.floatingButton.frame;
+        CGFloat panelW = panel.frame.size.width;
+        CGFloat panelH = panel.frame.size.height;
+        CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+        CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
+
+        CGFloat panelX = (btnFrame.origin.x + btnFrame.size.width / 2.0 > screenW / 2.0) ? (screenW - panelW - 10) : 10;
+        CGFloat panelY = btnFrame.origin.y - panelH - 8;
+        if (panelY < 60) {
+            panelY = btnFrame.origin.y + btnFrame.size.height + 8;
+        }
+        if (panelY + panelH > screenH - 40) {
+            panelY = screenH - panelH - 40;
+        }
+
+        panel.frame = CGRectMake(panelX, panelY, panelW, panelH);
+        [panel refreshList];
+        panel.alpha = 0.0;
+        panel.hidden = NO;
+        [UIView animateWithDuration:0.2 animations:^{
+            panel.alpha = 1.0;
+        }];
+    } else {
+        [UIView animateWithDuration:0.2 animations:^{
+            panel.alpha = 0.0;
+        } completion:^(BOOL finished) {
+            panel.hidden = YES;
+        }];
+    }
 }
 
 @end
@@ -451,6 +529,57 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
         method_exchangeImplementations(origMethod, swizzledMethod);
     }
 }
+
+@interface WKWebView (Sniffer)
+@end
+
+@implementation WKWebView (Sniffer)
+
+- (instancetype)sniff_initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
+    if (configuration) {
+        NSString *jsCode = @"(function(){\
+            function postUrl(u){\
+                if(!u||typeof u!=='string'||u.indexOf('blob:')===0||u.indexOf('data:')===0)return;\
+                var l=u.toLowerCase();\
+                if(l.indexOf('.m3u8')!==-1||l.indexOf('.mp4')!==-1||l.indexOf('.flv')!==-1||l.indexOf('.mov')!==-1||l.indexOf('.mkv')!==-1||l.indexOf('.mpd')!==-1||l.indexOf('m3u8')!==-1){\
+                    try{window.webkit.messageHandlers.SnifferBridge.postMessage(u);}catch(e){}\
+                }\
+            }\
+            function check(){\
+                var els=document.querySelectorAll('video, audio, source');\
+                for(var i=0;i<els.length;i++){\
+                    if(els[i].src)postUrl(els[i].src);\
+                    if(els[i].currentSrc)postUrl(els[i].currentSrc);\
+                }\
+            }\
+            check();\
+            setInterval(check,1200);\
+            var origOpen=XMLHttpRequest.prototype.open;\
+            XMLHttpRequest.prototype.open=function(m,u){\
+                postUrl(u);\
+                return origOpen.apply(this,arguments);\
+            };\
+            if(window.fetch){\
+                var origFetch=window.fetch;\
+                window.fetch=function(input,init){\
+                    if(typeof input==='string'){postUrl(input);}\
+                    else if(input&&input.url){postUrl(input.url);}\
+                    return origFetch.apply(this,arguments);\
+                };\
+            }\
+        })();";
+
+        WKUserScript *script = [[WKUserScript alloc] initWithSource:jsCode injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:NO];
+        [configuration.userContentController addUserScript:script];
+
+        @try {
+            [configuration.userContentController addScriptMessageHandler:[SnifferManager sharedManager].scriptBridge name:@"SnifferBridge"];
+        } @catch (NSException *e) {}
+    }
+    return [self sniff_initWithFrame:frame configuration:configuration];
+}
+
+@end
 
 @interface AVPlayer (Sniffer)
 @end
@@ -554,6 +683,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @end
 
 __attribute__((constructor)) static void SnifferInit(void) {
+    SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
     SwizzleClassMethod([AVPlayer class], @selector(playerWithURL:), @selector(sniff_playerWithURL:));
     SwizzleMethod([AVPlayer class], @selector(initWithURL:), @selector(sniff_initWithURL:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
