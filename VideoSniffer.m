@@ -22,9 +22,40 @@
 - (void)refreshList;
 @end
 
+@interface SnifferRootViewController : UIViewController
+@end
+
 @interface SnifferOverlayWindow : UIWindow
 @property (nonatomic, strong) SnifferMiniPanelView *panelView;
 @property (nonatomic, strong) UIButton *floatingButton;
+@end
+
+@implementation SnifferRootViewController
+- (BOOL)shouldAutorotate {
+    return YES;
+}
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskAll;
+}
+- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
+    [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+    [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+        SnifferOverlayWindow *win = (SnifferOverlayWindow *)self.view.window;
+        if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
+            UIButton *btn = win.floatingButton;
+            if (btn) {
+                CGFloat btnW = btn.frame.size.width;
+                CGFloat btnH = btn.frame.size.height;
+                CGFloat safeX = MIN(MAX(btn.frame.origin.x, 10), size.width - btnW - 10);
+                CGFloat safeY = MIN(MAX(btn.frame.origin.y, 40), size.height - btnH - 40);
+                btn.frame = CGRectMake(safeX, safeY, btnW, btnH);
+            }
+            if (win.panelView && !win.panelView.hidden) {
+                win.panelView.hidden = YES;
+            }
+        }
+    } completion:nil];
+}
 @end
 
 @implementation SnifferOverlayWindow
@@ -91,16 +122,16 @@
         self.backgroundColor = [UIColor clearColor];
         self.selectionStyle = UITableViewCellSelectionStyleNone;
 
-        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 6, 290, 16)];
+        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, 286, 16)];
         _titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        _titleLabel.textColor = [UIColor whiteColor];
+        _titleLabel.textColor = [UIColor colorWithRed:0.2 green:0.22 blue:0.25 alpha:1.0];
 
-        _urlLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 23, 290, 14)];
+        _urlLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 23, 286, 14)];
         _urlLabel.font = [UIFont systemFontOfSize:10];
-        _urlLabel.textColor = [UIColor colorWithWhite:0.7 alpha:1.0];
+        _urlLabel.textColor = [UIColor colorWithRed:0.45 green:0.48 blue:0.52 alpha:1.0];
         _urlLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
 
-        _btnScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(10, 40, 290, 24)];
+        _btnScrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(12, 40, 286, 24)];
         _btnScrollView.showsHorizontalScrollIndicator = NO;
 
         _btnStack = [[UIStackView alloc] initWithFrame:_btnScrollView.bounds];
@@ -118,25 +149,25 @@
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
             [btn setTitle:name forState:UIControlStateNormal];
             btn.titleLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
-            btn.layer.cornerRadius = 4;
+            btn.layer.cornerRadius = 5;
             btn.layer.masksToBounds = YES;
-            btn.contentEdgeInsets = UIEdgeInsetsMake(3, 7, 3, 7);
+            btn.contentEdgeInsets = UIEdgeInsetsMake(3, 8, 3, 8);
 
             if ([name isEqualToString:@"复制"]) {
-                btn.backgroundColor = [UIColor colorWithWhite:0.25 alpha:0.8];
-                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                btn.backgroundColor = [UIColor colorWithWhite:0.92 alpha:1.0];
+                [btn setTitleColor:[UIColor colorWithWhite:0.25 alpha:1.0] forState:UIControlStateNormal];
             } else if ([name isEqualToString:@"Forward"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.0 green:0.55 blue:0.8 alpha:0.8];
-                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                btn.backgroundColor = [UIColor colorWithRed:0.86 green:0.94 blue:0.98 alpha:1.0];
+                [btn setTitleColor:[UIColor colorWithRed:0.05 green:0.45 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
             } else if ([name isEqualToString:@"Fileball"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.18 green:0.6 blue:0.25 alpha:0.8];
-                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                btn.backgroundColor = [UIColor colorWithRed:0.88 green:0.95 blue:0.88 alpha:1.0];
+                [btn setTitleColor:[UIColor colorWithRed:0.15 green:0.52 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
             } else if ([name isEqualToString:@"Infuse"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.6 green:0.2 blue:0.7 alpha:0.8];
-                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                btn.backgroundColor = [UIColor colorWithRed:0.94 green:0.88 blue:0.96 alpha:1.0];
+                [btn setTitleColor:[UIColor colorWithRed:0.5 green:0.18 blue:0.62 alpha:1.0] forState:UIControlStateNormal];
             } else if ([name isEqualToString:@"SenPlayer"]) {
-                btn.backgroundColor = [UIColor colorWithRed:0.3 green:0.4 blue:0.85 alpha:0.8];
-                [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                btn.backgroundColor = [UIColor colorWithRed:0.9 green:0.91 blue:0.98 alpha:1.0];
+                [btn setTitleColor:[UIColor colorWithRed:0.28 green:0.35 blue:0.78 alpha:1.0] forState:UIControlStateNormal];
             }
 
             [btn addTarget:self action:@selector(btnTap:) forControlEvents:UIControlEventTouchUpInside];
@@ -165,55 +196,60 @@
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor clearColor];
-        self.layer.cornerRadius = 14;
+        self.layer.cornerRadius = 16;
         self.layer.masksToBounds = YES;
         self.layer.borderWidth = 0.5;
-        self.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
+        self.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
 
-        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
         blurView.frame = self.bounds;
         blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self addSubview:blurView];
 
-        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 34)];
-        header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.05];
+        UIView *tintOverlay = [[UIView alloc] initWithFrame:self.bounds];
+        tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.95 alpha:0.78];
+        [self addSubview:tintOverlay];
+
+        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, frame.size.width, 36)];
+        header.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.35];
         [self addSubview:header];
 
-        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(12, 8, 140, 18)];
+        _titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(14, 9, 140, 18)];
         _titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        _titleLabel.textColor = [UIColor whiteColor];
+        _titleLabel.textColor = [UIColor colorWithRed:0.18 green:0.2 blue:0.22 alpha:1.0];
         _titleLabel.text = @"嗅探资源";
         [header addSubview:_titleLabel];
 
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        closeBtn.frame = CGRectMake(frame.size.width - 46, 5, 40, 24);
+        closeBtn.frame = CGRectMake(frame.size.width - 48, 6, 40, 24);
         [closeBtn setTitle:@"关闭" forState:UIControlStateNormal];
         closeBtn.titleLabel.font = [UIFont systemFontOfSize:11];
-        [closeBtn setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+        [closeBtn setTitleColor:[UIColor colorWithRed:0.45 green:0.48 blue:0.52 alpha:1.0] forState:UIControlStateNormal];
         [closeBtn addTarget:self action:@selector(closeTap) forControlEvents:UIControlEventTouchUpInside];
         [header addSubview:closeBtn];
 
         UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        clearBtn.frame = CGRectMake(frame.size.width - 92, 5, 40, 24);
+        clearBtn.frame = CGRectMake(frame.size.width - 94, 6, 40, 24);
         [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
         clearBtn.titleLabel.font = [UIFont systemFontOfSize:11];
-        [clearBtn setTitleColor:[UIColor colorWithWhite:0.7 alpha:1.0] forState:UIControlStateNormal];
+        [clearBtn setTitleColor:[UIColor colorWithRed:0.45 green:0.48 blue:0.52 alpha:1.0] forState:UIControlStateNormal];
         [clearBtn addTarget:self action:@selector(clearTap) forControlEvents:UIControlEventTouchUpInside];
         [header addSubview:clearBtn];
 
-        _tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 34, frame.size.width, frame.size.height - 34) style:UITableViewStylePlain];
+        _tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, 36, frame.size.width, frame.size.height - 36) style:UITableViewStylePlain];
         _tableView.backgroundColor = [UIColor clearColor];
-        _tableView.separatorColor = [UIColor colorWithWhite:1.0 alpha:0.1];
+        _tableView.separatorColor = [UIColor colorWithWhite:0.0 alpha:0.06];
         _tableView.delegate = self;
         _tableView.dataSource = self;
         _tableView.rowHeight = 70;
         [_tableView registerClass:[SnifferMiniCell class] forCellReuseIdentifier:@"Cell"];
         [self addSubview:_tableView];
 
-        _emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 70, frame.size.width, 40)];
+        _emptyLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 72, frame.size.width, 40)];
         _emptyLabel.textAlignment = NSTextAlignmentCenter;
-        _emptyLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+        _emptyLabel.textColor = [UIColor colorWithRed:0.5 green:0.52 blue:0.55 alpha:1.0];
         _emptyLabel.font = [UIFont systemFontOfSize:11];
         _emptyLabel.text = @"暂无嗅探资源";
         [self addSubview:_emptyLabel];
@@ -325,7 +361,7 @@
         }
     }
     if (!isMedia) {
-        if ([lower containsString:@"m3u8"] || [lower containsString:@"googlevideo.com"]) {
+        if ([lower containsString:@"m3u8"] || [lower containsString:@"googlevideo.com/videoplayback"]) {
             isMedia = YES;
         }
     }
@@ -392,10 +428,10 @@
             }
 
             self.overlayWindow.frame = [UIScreen mainScreen].bounds;
-            self.overlayWindow.windowLevel = UIWindowLevelAlert + 1000;
+            self.overlayWindow.windowLevel = 10000000.0;
             self.overlayWindow.backgroundColor = [UIColor clearColor];
 
-            UIViewController *rootVC = [[UIViewController alloc] init];
+            SnifferRootViewController *rootVC = [[SnifferRootViewController alloc] init];
             rootVC.view.backgroundColor = [UIColor clearColor];
             self.overlayWindow.rootViewController = rootVC;
 
@@ -453,7 +489,7 @@
         CGFloat btnH = btn.frame.size.height;
 
         CGFloat targetX = (center.x > screenW / 2.0) ? (screenW - btnW / 2.0 - 8) : (btnW / 2.0 + 8);
-        CGFloat targetY = MIN(MAX(center.y, 60 + btnH / 2.0), screenH - 60 - btnH / 2.0);
+        CGFloat targetY = MIN(MAX(center.y, 40 + btnH / 2.0), screenH - 40 - btnH / 2.0);
 
         [UIView animateWithDuration:0.25 animations:^{
             btn.center = CGPointMake(targetX, targetY);
@@ -471,16 +507,16 @@
         CGRect btnFrame = self.overlayWindow.floatingButton.frame;
         CGFloat panelW = panel.frame.size.width;
         CGFloat panelH = panel.frame.size.height;
-        CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-        CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
+        CGFloat screenW = self.overlayWindow.rootViewController.view.bounds.size.width;
+        CGFloat screenH = self.overlayWindow.rootViewController.view.bounds.size.height;
 
         CGFloat panelX = (btnFrame.origin.x + btnFrame.size.width / 2.0 > screenW / 2.0) ? (screenW - panelW - 10) : 10;
         CGFloat panelY = btnFrame.origin.y - panelH - 8;
-        if (panelY < 60) {
+        if (panelY < 40) {
             panelY = btnFrame.origin.y + btnFrame.size.height + 8;
         }
-        if (panelY + panelH > screenH - 40) {
-            panelY = screenH - panelH - 40;
+        if (panelY + panelH > screenH - 30) {
+            panelY = screenH - panelH - 30;
         }
 
         panel.frame = CGRectMake(panelX, panelY, panelW, panelH);
@@ -530,6 +566,23 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
+@interface NSURLSessionTask (Sniffer)
+@end
+
+@implementation NSURLSessionTask (Sniffer)
+
+- (void)sniff_resume {
+    if (self.originalRequest.URL) {
+        [[SnifferManager sharedManager] addMediaUrl:self.originalRequest.URL.absoluteString];
+    }
+    if (self.currentRequest.URL) {
+        [[SnifferManager sharedManager] addMediaUrl:self.currentRequest.URL.absoluteString];
+    }
+    [self sniff_resume];
+}
+
+@end
+
 @interface WKWebView (Sniffer)
 @end
 
@@ -553,7 +606,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                 }\
             }\
             check();\
-            setInterval(check,1200);\
+            setInterval(check,1000);\
             var origOpen=XMLHttpRequest.prototype.open;\
             XMLHttpRequest.prototype.open=function(m,u){\
                 postUrl(u);\
@@ -567,6 +620,12 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                     return origFetch.apply(this,arguments);\
                 };\
             }\
+            var origPlay=HTMLMediaElement.prototype.play;\
+            HTMLMediaElement.prototype.play=function(){\
+                if(this.src)postUrl(this.src);\
+                if(this.currentSrc)postUrl(this.currentSrc);\
+                return origPlay.apply(this,arguments);\
+            };\
         })();";
 
         WKUserScript *script = [[WKUserScript alloc] initWithSource:jsCode injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:NO];
@@ -577,6 +636,13 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
         } @catch (NSException *e) {}
     }
     return [self sniff_initWithFrame:frame configuration:configuration];
+}
+
+- (WKNavigation *)sniff_loadRequest:(NSURLRequest *)request {
+    if (request.URL) {
+        [[SnifferManager sharedManager] addMediaUrl:request.URL.absoluteString];
+    }
+    return [self sniff_loadRequest:request];
 }
 
 @end
@@ -606,6 +672,23 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @end
 
 @implementation AVPlayerItem (Sniffer)
+
++ (instancetype)sniff_playerItemWithURL:(NSURL *)URL {
+    if (URL) {
+        [[SnifferManager sharedManager] addMediaUrl:URL.absoluteString];
+    }
+    return [self sniff_playerItemWithURL:URL];
+}
+
++ (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset {
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *url = ((AVURLAsset *)asset).URL;
+        if (url) {
+            [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
+        }
+    }
+    return [self sniff_playerItemWithAsset:asset];
+}
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
     if (URL) {
@@ -647,53 +730,22 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 @end
 
-@interface NSURLSession (Sniffer)
-@end
-
-@implementation NSURLSession (Sniffer)
-
-- (NSURLSessionDataTask *)sniff_dataTaskWithRequest:(NSURLRequest *)request {
-    if (request.URL) {
-        [[SnifferManager sharedManager] addMediaUrl:request.URL.absoluteString];
-    }
-    return [self sniff_dataTaskWithRequest:request];
-}
-
-- (NSURLSessionDataTask *)sniff_dataTaskWithURL:(NSURL *)url {
-    if (url) {
-        [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
-    }
-    return [self sniff_dataTaskWithURL:url];
-}
-
-- (NSURLSessionDataTask *)sniff_dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
-    if (request.URL) {
-        [[SnifferManager sharedManager] addMediaUrl:request.URL.absoluteString];
-    }
-    return [self sniff_dataTaskWithRequest:request completionHandler:completionHandler];
-}
-
-- (NSURLSessionDataTask *)sniff_dataTaskWithURL:(NSURL *)url completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))completionHandler {
-    if (url) {
-        [[SnifferManager sharedManager] addMediaUrl:url.absoluteString];
-    }
-    return [self sniff_dataTaskWithURL:url completionHandler:completionHandler];
-}
-
-@end
-
 __attribute__((constructor)) static void SnifferInit(void) {
+    SwizzleMethod([NSURLSessionTask class], @selector(resume), @selector(sniff_resume));
+
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
+    SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
+
     SwizzleClassMethod([AVPlayer class], @selector(playerWithURL:), @selector(sniff_playerWithURL:));
     SwizzleMethod([AVPlayer class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+
+    SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithURL:), @selector(sniff_playerItemWithURL:));
+    SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:), @selector(sniff_playerItemWithAsset:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:), @selector(sniff_initWithAsset:));
+
     SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
     SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
-    SwizzleMethod([NSURLSession class], @selector(dataTaskWithRequest:), @selector(sniff_dataTaskWithRequest:));
-    SwizzleMethod([NSURLSession class], @selector(dataTaskWithURL:), @selector(sniff_dataTaskWithURL:));
-    SwizzleMethod([NSURLSession class], @selector(dataTaskWithRequest:completionHandler:), @selector(sniff_dataTaskWithRequest:completionHandler:));
-    SwizzleMethod([NSURLSession class], @selector(dataTaskWithURL:completionHandler:), @selector(sniff_dataTaskWithURL:completionHandler:));
 
     [[SnifferManager sharedManager] registerNotifications];
 }
