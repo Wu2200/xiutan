@@ -52,6 +52,7 @@
         if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
             CGFloat ratio = [[SnifferManager sharedManager] loadPositionRatio];
             CGFloat targetCenterY = ratio * size.height;
+
             UIView *container = win.buttonsContainer;
             if (container) {
                 CGFloat w = container.frame.size.width;
@@ -293,13 +294,20 @@
         return;
     }
 
-    [btn.layer removeAnimationForKey:@"sniffer.refresh.rotation"];
-    CABasicAnimation *rotation = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-    rotation.fromValue = @(0.0);
-    rotation.toValue = @(M_PI * 6.0);
-    rotation.duration = 1.5;
-    rotation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    [btn.layer addAnimation:rotation forKey:@"sniffer.refresh.rotation"];
+    btn.transform = CGAffineTransformIdentity;
+    [UIView animateKeyframesWithDuration:1.5 delay:0 options:UIViewKeyframeAnimationOptionCalculationModeLinear animations:^{
+        [UIView addKeyframeWithRelativeStartTime:0.0 relativeDuration:0.33 animations:^{
+            btn.transform = CGAffineTransformMakeRotation((CGFloat)(M_PI * 0.66));
+        }];
+        [UIView addKeyframeWithRelativeStartTime:0.33 relativeDuration:0.33 animations:^{
+            btn.transform = CGAffineTransformMakeRotation((CGFloat)(M_PI * 1.33));
+        }];
+        [UIView addKeyframeWithRelativeStartTime:0.66 relativeDuration:0.34 animations:^{
+            btn.transform = CGAffineTransformMakeRotation((CGFloat)(M_PI * 1.99));
+        }];
+    } completion:^(BOOL finished) {
+        btn.transform = CGAffineTransformIdentity;
+    }];
 }
 
 - (void)captureUrl:(NSString *)urlStr {
