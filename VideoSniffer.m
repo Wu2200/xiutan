@@ -15,6 +15,9 @@
 @implementation SnifferMediaModel
 @end
 
+@interface SnifferURLProtocol : NSURLProtocol
+@end
+
 @interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
 @end
 
@@ -49,9 +52,19 @@
 - (void)registerNotifications;
 @end
 
-@interface SnifferManager ()
-- (BOOL)isMediaUrl:(NSString *)urlStr;
-- (void)updateBadgeAndPanel;
+@implementation SnifferURLProtocol
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if (request.URL) {
+        [[SnifferManager sharedManager] captureUrl:request.URL.absoluteString];
+    }
+    return NO;
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
 @end
 
 @implementation SnifferRootViewController
@@ -405,7 +418,7 @@
 
 - (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
-    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf", @".json"];
+    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
     for (NSString *b in blackList) {
         if ([lower containsString:b]) {
             return NO;
@@ -450,19 +463,17 @@
             [self.mediaList insertObject:m atIndex:0];
         }
 
-        [self updateBadgeAndPanel];
-    });
-}
+        if (!self.overlayWindow) {
+            [self setupFloatingUI];
+        }
 
-- (void)updateBadgeAndPanel {
-    if (!self.overlayWindow) {
-        [self setupFloatingUI];
-    }
-    NSString *title = [NSString stringWithFormat:@"🎬 嗅探 %lu", (unsigned long)self.mediaList.count];
-    [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
-    if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
-        [self.overlayWindow.panelView refreshList];
-    }
+        NSString *title = [NSString stringWithFormat:@"🎬 嗅探 %lu", (unsigned long)self.mediaList.count];
+        [self.overlayWindow.floatingButton setTitle:title forState:UIControlStateNormal];
+
+        if (self.overlayWindow.panelView && !self.overlayWindow.panelView.hidden) {
+            [self.overlayWindow.panelView refreshList];
+        }
+    });
 }
 
 - (void)clearMedia {
@@ -641,42 +652,50 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
     }
 }
 
-static void CaptureAssetUrl(AVAsset *asset) {
-    if ([asset isKindOfClass:[AVURLAsset class]]) {
-        NSURL *url = ((AVURLAsset *)asset).URL;
-        if (url) {
-            [[SnifferManager sharedManager] captureUrl:url.absoluteString];
-        }
+static void InjectSnifferProtocol(NSURLSessionConfiguration *config) {
+    if (!config) {
+        return;
+    }
+    NSMutableArray *protocols = [config.protocolClasses mutableCopy];
+    if (!protocols) {
+        protocols = [NSMutableArray array];
+    }
+    Class protoCls = [SnifferURLProtocol class];
+    if (![protocols containsObject:protoCls]) {
+        [protocols insertObject:protoCls atIndex:0];
+        config.protocolClasses = protocols;
     }
 }
 
-@interface NSURLRequest (Sniffer)
+@interface NSURLSessionConfiguration (SnifferHook)
 @end
 
-@implementation NSURLRequest (Sniffer)
+@implementation NSURLSessionConfiguration (SnifferHook)
 
-- (instancetype)sniff_initWithURL:(NSURL *)URL cachePolicy:(NSURLRequestCachePolicy)cachePolicy timeoutInterval:(NSTimeInterval)timeoutInterval {
-    if (URL) {
-        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
-    }
-    return [self sniff_initWithURL:URL cachePolicy:cachePolicy timeoutInterval:timeoutInterval];
++ (NSURLSessionConfiguration *)sniff_defaultSessionConfiguration {
+    NSURLSessionConfiguration *config = [self sniff_defaultSessionConfiguration];
+    InjectSnifferProtocol(config);
+    return config;
+}
+
++ (NSURLSessionConfiguration *)sniff_ephemeralSessionConfiguration {
+    NSURLSessionConfiguration *config = [self sniff_ephemeralSessionConfiguration];
+    InjectSnifferProtocol(config);
+    return config;
 }
 
 @end
 
-@interface NSURLSessionTask (Sniffer)
+@interface NSURLSession (SnifferHook)
 @end
 
-@implementation NSURLSessionTask (Sniffer)
+@implementation NSURLSession (SnifferHook)
 
-- (void)sniff_resume {
-    if (self.originalRequest.URL) {
-        [[SnifferManager sharedManager] captureUrl:self.originalRequest.URL.absoluteString];
++ (NSURLSession *)sniff_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
+    if (configuration) {
+        InjectSnifferProtocol(configuration);
     }
-    if (self.currentRequest.URL) {
-        [[SnifferManager sharedManager] captureUrl:self.currentRequest.URL.absoluteString];
-    }
-    [self sniff_resume];
+    return [self sniff_sessionWithConfiguration:configuration delegate:delegate delegateQueue:queue];
 }
 
 @end
@@ -695,10 +714,7 @@ static void CaptureAssetUrl(AVAsset *asset) {
                     if(u.indexOf('blob:')===0||u.indexOf('data:')===0)return;\
                     var abs=u;\
                     try{abs=new URL(u,location.href).href;}catch(e){}\
-                    var l=abs.toLowerCase();\
-                    if(l.indexOf('.m3u8')!==-1||l.indexOf('.mp4')!==-1||l.indexOf('.flv')!==-1||l.indexOf('.mov')!==-1||l.indexOf('.mkv')!==-1||l.indexOf('.mpd')!==-1||l.indexOf('m3u8')!==-1||l.indexOf('playlist')!==-1||l.indexOf('stream')!==-1||l.indexOf('videoplayback')!==-1){\
-                        try{window.webkit.messageHandlers.SnifferBridge.postMessage(abs);}catch(e){}\
-                    }\
+                    try{window.webkit.messageHandlers.SnifferBridge.postMessage(abs);}catch(e){}\
                 }catch(e){}\
             }\
             function check(){\
@@ -785,8 +801,11 @@ static void CaptureAssetUrl(AVAsset *asset) {
 }
 
 + (instancetype)sniff_playerWithPlayerItem:(AVPlayerItem *)item {
-    if (item) {
-        CaptureAssetUrl(item.asset);
+    if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)item.asset).URL;
+        if (u) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
     }
     return [self sniff_playerWithPlayerItem:item];
 }
@@ -799,15 +818,21 @@ static void CaptureAssetUrl(AVAsset *asset) {
 }
 
 - (instancetype)sniff_initWithPlayerItem:(AVPlayerItem *)item {
-    if (item) {
-        CaptureAssetUrl(item.asset);
+    if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)item.asset).URL;
+        if (u) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
     }
     return [self sniff_initWithPlayerItem:item];
 }
 
 - (void)sniff_replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
-    if (item) {
-        CaptureAssetUrl(item.asset);
+    if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)item.asset).URL;
+        if (u) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
     }
     [self sniff_replaceCurrentItemWithPlayerItem:item];
 }
@@ -827,13 +852,13 @@ static void CaptureAssetUrl(AVAsset *asset) {
 }
 
 + (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset {
-    CaptureAssetUrl(asset);
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)asset).URL;
+        if (u) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
+    }
     return [self sniff_playerItemWithAsset:asset];
-}
-
-+ (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys {
-    CaptureAssetUrl(asset);
-    return [self sniff_playerItemWithAsset:asset automaticallyLoadedAssetKeys:automaticallyLoadedAssetKeys];
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
@@ -844,13 +869,13 @@ static void CaptureAssetUrl(AVAsset *asset) {
 }
 
 - (instancetype)sniff_initWithAsset:(AVAsset *)asset {
-    CaptureAssetUrl(asset);
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)asset).URL;
+        if (u) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
+    }
     return [self sniff_initWithAsset:asset];
-}
-
-- (instancetype)sniff_initWithAsset:(AVAsset *)asset automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys {
-    CaptureAssetUrl(asset);
-    return [self sniff_initWithAsset:asset automaticallyLoadedAssetKeys:automaticallyLoadedAssetKeys];
 }
 
 @end
@@ -880,20 +905,6 @@ static void CaptureAssetUrl(AVAsset *asset) {
 @end
 
 @implementation ThirdPartySniffer
-
-- (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl {
-    if (aUrl) {
-        [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString];
-    }
-    return [self sniff_ijk_initWithContentURL:aUrl];
-}
-
-- (instancetype)sniff_ijk_initWithContentURLString:(NSString *)aUrlStr {
-    if (aUrlStr) {
-        [[SnifferManager sharedManager] captureUrl:aUrlStr];
-    }
-    return [self sniff_ijk_initWithContentURLString:aUrlStr];
-}
 
 - (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl withOptions:(id)options {
     if (aUrl) {
@@ -976,13 +987,21 @@ static void HookThirdPartyClassMethod(NSString *className, SEL origSel, SEL dumm
 }
 
 __attribute__((constructor)) static void SnifferInit(void) {
-    SwizzleMethod([NSURLRequest class], @selector(initWithURL:cachePolicy:timeoutInterval:), @selector(sniff_initWithURL:cachePolicy:timeoutInterval:));
+    [NSURLProtocol registerClass:[SnifferURLProtocol class]];
 
-    Class taskCls = NSClassFromString(@"__NSCFURLSessionTask");
-    if (taskCls) {
-        SwizzleMethod(taskCls, @selector(resume), @selector(sniff_resume));
+    SwizzleClassMethod([NSURLSessionConfiguration class], @selector(defaultSessionConfiguration), @selector(sniff_defaultSessionConfiguration));
+    SwizzleClassMethod([NSURLSessionConfiguration class], @selector(ephemeralSessionConfiguration), @selector(sniff_ephemeralSessionConfiguration));
+    SwizzleClassMethod([NSURLSession class], @selector(sessionWithConfiguration:delegate:delegateQueue:), @selector(sniff_sessionWithConfiguration:delegate:delegateQueue:));
+
+    Class browsingContextCls = NSClassFromString(@"WKBrowsingContextController");
+    SEL registerSchemeSel = NSSelectorFromString(@"registerSchemeForCustomProtocol:");
+    if (browsingContextCls && [browsingContextCls respondsToSelector:registerSchemeSel]) {
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        [browsingContextCls performSelector:registerSchemeSel withObject:@"http"];
+        [browsingContextCls performSelector:registerSchemeSel withObject:@"https"];
+        #pragma clang diagnostic pop
     }
-    SwizzleMethod([NSURLSessionTask class], @selector(resume), @selector(sniff_resume));
 
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
     SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
@@ -997,16 +1016,12 @@ __attribute__((constructor)) static void SnifferInit(void) {
 
     SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithURL:), @selector(sniff_playerItemWithURL:));
     SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:), @selector(sniff_playerItemWithAsset:));
-    SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:automaticallyLoadedAssetKeys:), @selector(sniff_playerItemWithAsset:automaticallyLoadedAssetKeys:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
     SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:), @selector(sniff_initWithAsset:));
-    SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:automaticallyLoadedAssetKeys:), @selector(sniff_initWithAsset:automaticallyLoadedAssetKeys:));
 
     SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
     SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
 
-    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURL:), @selector(sniff_ijk_initWithContentURL:));
-    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURLString:), @selector(sniff_ijk_initWithContentURLString:));
     HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURL:withOptions:), @selector(sniff_ijk_initWithContentURL:withOptions:));
     HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURLString:withOptions:), @selector(sniff_ijk_initWithContentURLString:withOptions:));
     HookThirdParty(@"AliPlayer", @selector(setUrl:), @selector(sniff_ali_setUrl:));
