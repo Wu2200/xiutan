@@ -1,0 +1,32 @@
+name: Build iOS Dylib
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Compile Dylib
+        run: |
+          xcrun -sdk iphoneos clang \
+            -target arm64-apple-ios14.0 \
+            -shared -dynamiclib \
+            -fobjc-arc \
+            -framework Foundation \
+            -framework UIKit \
+            -framework AVFoundation \
+            -o VideoSniffer.dylib \
+            VideoSniffer.m
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoSniffer-Dylib
+          path: VideoSniffer.dylib
