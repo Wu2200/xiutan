@@ -11,8 +11,11 @@
 @end
 
 @interface SnifferOverlayWindow : UIWindow
+@property (nonatomic, strong) UIButton *roundIdleButton;
 @property (nonatomic, strong) UIView *buttonsContainer;
 @property (nonatomic, assign) BOOL isSuspendedHidden;
+- (void)syncContainerPositionToIdleButton;
+- (void)syncIdleButtonPositionToContainer;
 @end
 
 @interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
@@ -31,6 +34,8 @@
 - (void)clearMedia;
 - (void)registerNotifications;
 - (void)handleHostPageChanged:(UIViewController *)vc;
+- (void)savePositionRatio:(CGFloat)ratio;
+- (CGFloat)loadPositionRatio;
 @end
 
 @implementation SnifferRootViewController
@@ -45,12 +50,24 @@
     [coordinator animateAlongsideTransition:^(id<UIViewControllerTransitionCoordinatorContext> context) {
         SnifferOverlayWindow *win = (SnifferOverlayWindow *)self.view.window;
         if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
+            CGFloat ratio = [[SnifferManager sharedManager] loadPositionRatio];
+            CGFloat targetCenterY = ratio * size.height;
+
+            UIButton *idleBtn = win.roundIdleButton;
+            if (idleBtn) {
+                CGFloat btnW = idleBtn.frame.size.width;
+                CGFloat btnH = idleBtn.frame.size.height;
+                CGFloat safeX = size.width - btnW - 10;
+                CGFloat safeY = MIN(MAX(targetCenterY - btnH / 2.0, 40), size.height - btnH - 40);
+                idleBtn.frame = CGRectMake(safeX, safeY, btnW, btnH);
+            }
+
             UIView *container = win.buttonsContainer;
             if (container) {
                 CGFloat w = container.frame.size.width;
                 CGFloat h = container.frame.size.height;
                 CGFloat safeX = size.width - w - 10;
-                CGFloat safeY = MIN(MAX(container.frame.origin.y, 40), size.height - h - 40);
+                CGFloat safeY = MIN(MAX(targetCenterY - h / 2.0, 40), size.height - h - 40);
                 container.frame = CGRectMake(safeX, safeY, w, h);
             }
         }
@@ -59,14 +76,55 @@
 @end
 
 @implementation SnifferOverlayWindow
+
+- (void)syncContainerPositionToIdleButton {
+    if (!self.roundIdleButton || !self.buttonsContainer) {
+        return;
+    }
+    CGFloat centerY = self.roundIdleButton.center.y;
+    CGFloat screenH = self.bounds.size.height;
+    CGFloat h = self.buttonsContainer.frame.size.height;
+    CGFloat safeY = MIN(MAX(centerY - h / 2.0, 40), screenH - h - 40);
+    CGRect f = self.buttonsContainer.frame;
+    f.origin.y = safeY;
+    f.origin.x = self.bounds.size.width - f.size.width - 10;
+    self.buttonsContainer.frame = f;
+}
+
+- (void)syncIdleButtonPositionToContainer {
+    if (!self.roundIdleButton || !self.buttonsContainer) {
+        return;
+    }
+    CGFloat centerY = self.buttonsContainer.center.y;
+    CGFloat screenH = self.bounds.size.height;
+    CGFloat h = self.roundIdleButton.frame.size.height;
+    CGFloat safeY = MIN(MAX(centerY - h / 2.0, 40), screenH - h - 40);
+    CGRect f = self.roundIdleButton.frame;
+    f.origin.y = safeY;
+    f.origin.x = self.bounds.size.width - f.size.width - 10;
+    self.roundIdleButton.frame = f;
+}
+
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.isSuspendedHidden || !self.buttonsContainer || self.buttonsContainer.hidden || self.buttonsContainer.alpha < 0.05) {
+    if (self.isSuspendedHidden) {
         return nil;
     }
-    CGPoint containerPoint = [self convertPoint:point toView:self.buttonsContainer];
-    if ([self.buttonsContainer pointInside:containerPoint withEvent:event]) {
-        return [super hitTest:point withEvent:event];
+
+    if (self.buttonsContainer && !self.buttonsContainer.hidden && self.buttonsContainer.alpha > 0.05) {
+        CGPoint containerPoint = [self convertPoint:point toView:self.buttonsContainer];
+        if ([self.buttonsContainer pointInside:containerPoint withEvent:event]) {
+            return [super hitTest:point withEvent:event];
+        }
+        return nil;
     }
+
+    if (self.roundIdleButton && !self.roundIdleButton.hidden && self.roundIdleButton.alpha > 0.05) {
+        CGPoint btnPoint = [self convertPoint:point toView:self.roundIdleButton];
+        if ([self.roundIdleButton pointInside:btnPoint withEvent:event]) {
+            return [super hitTest:point withEvent:event];
+        }
+    }
+
     return nil;
 }
 @end
@@ -94,6 +152,19 @@
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
     });
     return inst;
+}
+
+- (void)savePositionRatio:(CGFloat)ratio {
+    [[NSUserDefaults standardUserDefaults] setDouble:ratio forKey:@"Sniffer_PositionRatio_Y"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+- (CGFloat)loadPositionRatio {
+    double ratio = [[NSUserDefaults standardUserDefaults] doubleForKey:@"Sniffer_PositionRatio_Y"];
+    if (ratio <= 0.05 || ratio >= 0.95) {
+        return 0.5;
+    }
+    return (CGFloat)ratio;
 }
 
 - (void)registerNotifications {
@@ -161,10 +232,12 @@
             self.overlayWindow.isSuspendedHidden = NO;
             if (self.latestMediaUrl && self.latestMediaUrl.length > 0) {
                 [self showButtonsWithAnimation];
+            } else {
+                [self showIdleButtonWithAnimation];
             }
         } else {
             self.overlayWindow.isSuspendedHidden = YES;
-            [self hideButtonsWithAnimation];
+            [self hideAllFloatingUI];
         }
     }
 }
@@ -231,7 +304,11 @@
 
 - (void)clearMedia {
     self.latestMediaUrl = nil;
-    [self hideButtonsWithAnimation];
+    if (!self.overlayWindow.isSuspendedHidden) {
+        [self showIdleButtonWithAnimation];
+    } else {
+        [self hideAllFloatingUI];
+    }
 }
 
 - (void)setupFloatingUI {
@@ -274,13 +351,38 @@
 
             CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
             CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
+            CGFloat ratioY = [self loadPositionRatio];
+            CGFloat targetCenterY = ratioY * screenH;
+
+            CGFloat idleD = 38;
+            CGFloat idleSafeY = MIN(MAX(targetCenterY - idleD / 2.0, 40), screenH - idleD - 40);
+            UIButton *idleBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+            idleBtn.frame = CGRectMake(screenW - idleD - 10, idleSafeY, idleD, idleD);
+            idleBtn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
+            idleBtn.layer.cornerRadius = idleD / 2.0;
+            idleBtn.layer.masksToBounds = NO;
+            idleBtn.layer.borderWidth = 0.5;
+            idleBtn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.95].CGColor;
+            idleBtn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.15].CGColor;
+            idleBtn.layer.shadowOffset = CGSizeMake(0, 2);
+            idleBtn.layer.shadowRadius = 5;
+            idleBtn.layer.shadowOpacity = 1.0;
+            idleBtn.titleLabel.font = [UIFont systemFontOfSize:16];
+            [idleBtn setTitle:@"🎬" forState:UIControlStateNormal];
+
+            UIPanGestureRecognizer *idlePan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanIdleButton:)];
+            [idleBtn addGestureRecognizer:idlePan];
+
+            self.overlayWindow.roundIdleButton = idleBtn;
+            [rootVC.view addSubview:idleBtn];
 
             CGFloat btnW = 82;
             CGFloat btnH = 34;
             CGFloat spacing = 8;
             CGFloat totalH = btnH * 4 + spacing * 3;
+            CGFloat containerSafeY = MIN(MAX(targetCenterY - totalH / 2.0, 40), screenH - totalH - 40);
 
-            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(screenW - btnW - 10, (screenH - totalH) / 2.0, btnW, totalH)];
+            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(screenW - btnW - 10, containerSafeY, btnW, totalH)];
             container.backgroundColor = [UIColor clearColor];
             container.hidden = YES;
             container.alpha = 0.0;
@@ -383,31 +485,102 @@
 
 - (void)showButtonsWithAnimation {
     UIView *container = self.overlayWindow.buttonsContainer;
+    UIButton *idleBtn = self.overlayWindow.roundIdleButton;
     if (!container) {
         return;
     }
+
+    [self.overlayWindow syncContainerPositionToIdleButton];
+
+    if (idleBtn && !idleBtn.hidden) {
+        [UIView animateWithDuration:0.2 animations:^{
+            idleBtn.alpha = 0.0;
+            idleBtn.transform = CGAffineTransformMakeScale(0.4, 0.4);
+        } completion:^(BOOL finished) {
+            idleBtn.hidden = YES;
+            idleBtn.transform = CGAffineTransformIdentity;
+        }];
+    }
+
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
-        container.transform = CGAffineTransformMakeTranslation(50, 0);
-        [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:0 animations:^{
+        container.transform = CGAffineTransformMakeTranslation(40, 0);
+        [UIView animateWithDuration:0.35 delay:0.05 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:0 animations:^{
             container.alpha = 1.0;
             container.transform = CGAffineTransformIdentity;
         } completion:nil];
     }
 }
 
-- (void)hideButtonsWithAnimation {
+- (void)showIdleButtonWithAnimation {
     UIView *container = self.overlayWindow.buttonsContainer;
-    if (!container || container.hidden) {
-        return;
+    UIButton *idleBtn = self.overlayWindow.roundIdleButton;
+
+    if (container && !container.hidden) {
+        [UIView animateWithDuration:0.2 animations:^{
+            container.alpha = 0.0;
+            container.transform = CGAffineTransformMakeTranslation(30, 0);
+        } completion:^(BOOL finished) {
+            container.hidden = YES;
+            container.transform = CGAffineTransformIdentity;
+        }];
     }
-    [UIView animateWithDuration:0.25 animations:^{
-        container.alpha = 0.0;
-        container.transform = CGAffineTransformMakeTranslation(40, 0);
+
+    [self.overlayWindow syncIdleButtonPositionToContainer];
+
+    if (idleBtn) {
+        idleBtn.hidden = NO;
+        idleBtn.transform = CGAffineTransformMakeScale(0.5, 0.5);
+        [UIView animateWithDuration:0.3 delay:0.05 usingSpringWithDamping:0.8 initialSpringVelocity:0.5 options:0 animations:^{
+            idleBtn.alpha = 1.0;
+            idleBtn.transform = CGAffineTransformIdentity;
+        } completion:nil];
+    }
+}
+
+- (void)hideAllFloatingUI {
+    UIView *container = self.overlayWindow.buttonsContainer;
+    UIButton *idleBtn = self.overlayWindow.roundIdleButton;
+
+    [UIView animateWithDuration:0.2 animations:^{
+        if (container) {
+            container.alpha = 0.0;
+        }
+        if (idleBtn) {
+            idleBtn.alpha = 0.0;
+        }
     } completion:^(BOOL finished) {
-        container.hidden = YES;
-        container.transform = CGAffineTransformIdentity;
+        if (container) {
+            container.hidden = YES;
+        }
+        if (idleBtn) {
+            idleBtn.hidden = YES;
+        }
     }];
+}
+
+- (void)onPanIdleButton:(UIPanGestureRecognizer *)pan {
+    UIView *btn = self.overlayWindow.roundIdleButton;
+    UIView *superView = btn.superview;
+    CGPoint translation = [pan translationInView:superView];
+    CGPoint center = btn.center;
+    center.y += translation.y;
+    btn.center = center;
+    [pan setTranslation:CGPointMake(0.0, 0.0) inView:superView];
+
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        CGFloat screenH = superView.bounds.size.height;
+        CGFloat h = btn.frame.size.height;
+        CGFloat targetY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
+
+        [UIView animateWithDuration:0.25 animations:^{
+            btn.center = CGPointMake(btn.center.x, targetY);
+        } completion:^(BOOL finished) {
+            CGFloat ratio = targetY / screenH;
+            [self savePositionRatio:ratio];
+            [self.overlayWindow syncContainerPositionToIdleButton];
+        }];
+    }
 }
 
 - (void)onPanContainer:(UIPanGestureRecognizer *)pan {
@@ -425,7 +598,11 @@
         CGFloat targetY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
 
         [UIView animateWithDuration:0.25 animations:^{
-            container.center = CGPointMake(center.x, targetY);
+            container.center = CGPointMake(container.center.x, targetY);
+        } completion:^(BOOL finished) {
+            CGFloat ratio = targetY / screenH;
+            [self savePositionRatio:ratio];
+            [self.overlayWindow syncIdleButtonPositionToContainer];
         }];
     }
 }
@@ -479,31 +656,35 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @implementation NSURL (SnifferProbe)
 
 + (instancetype)sniff_URLWithString:(NSString *)URLString {
-    if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString];
+    NSURL *result = [self sniff_URLWithString:URLString];
+    if (result.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:result.absoluteString];
     }
-    return [self sniff_URLWithString:URLString];
+    return result;
 }
 
 + (instancetype)sniff_URLWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
-    if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString];
+    NSURL *result = [self sniff_URLWithString:URLString relativeToURL:baseURL];
+    if (result.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:result.absoluteString];
     }
-    return [self sniff_URLWithString:URLString relativeToURL:baseURL];
+    return result;
 }
 
 - (instancetype)sniff_initWithString:(NSString *)URLString {
-    if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString];
+    NSURL *result = [self sniff_initWithString:URLString];
+    if (result.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:result.absoluteString];
     }
-    return [self sniff_initWithString:URLString];
+    return result;
 }
 
 - (instancetype)sniff_initWithString:(NSString *)URLString relativeToURL:(NSURL *)baseURL {
-    if (URLString) {
-        [[SnifferManager sharedManager] captureUrl:URLString];
+    NSURL *result = [self sniff_initWithString:URLString relativeToURL:baseURL];
+    if (result.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:result.absoluteString];
     }
-    return [self sniff_initWithString:URLString relativeToURL:baseURL];
+    return result;
 }
 
 @end
@@ -574,7 +755,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 }
 
 - (WKNavigation *)sniff_loadRequest:(NSURLRequest *)request {
-    if (request.URL) {
+    if (request.URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:request.URL.absoluteString];
     }
     return [self sniff_loadRequest:request];
@@ -588,7 +769,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @implementation AVAsset (Sniffer)
 
 + (instancetype)sniff_assetWithURL:(NSURL *)URL {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_assetWithURL:URL];
@@ -602,7 +783,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @implementation AVPlayer (Sniffer)
 
 + (instancetype)sniff_playerWithURL:(NSURL *)URL {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_playerWithURL:URL];
@@ -611,7 +792,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 + (instancetype)sniff_playerWithPlayerItem:(AVPlayerItem *)item {
     if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)item.asset).URL;
-        if (u) {
+        if (u.absoluteString) {
             [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
@@ -619,7 +800,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL];
@@ -628,7 +809,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 - (instancetype)sniff_initWithPlayerItem:(AVPlayerItem *)item {
     if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)item.asset).URL;
-        if (u) {
+        if (u.absoluteString) {
             [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
@@ -638,7 +819,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 - (void)sniff_replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
     if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)item.asset).URL;
-        if (u) {
+        if (u.absoluteString) {
             [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
@@ -653,7 +834,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @implementation AVPlayerItem (Sniffer)
 
 + (instancetype)sniff_playerItemWithURL:(NSURL *)URL {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_playerItemWithURL:URL];
@@ -662,7 +843,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 + (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset {
     if ([asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)asset).URL;
-        if (u) {
+        if (u.absoluteString) {
             [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
@@ -670,7 +851,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL];
@@ -679,7 +860,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 - (instancetype)sniff_initWithAsset:(AVAsset *)asset {
     if ([asset isKindOfClass:[AVURLAsset class]]) {
         NSURL *u = ((AVURLAsset *)asset).URL;
-        if (u) {
+        if (u.absoluteString) {
             [[SnifferManager sharedManager] captureUrl:u.absoluteString];
         }
     }
@@ -694,14 +875,14 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @implementation AVURLAsset (Sniffer)
 
 + (instancetype)sniff_URLAssetWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_URLAssetWithURL:URL options:options];
 }
 
 - (instancetype)sniff_initWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_initWithURL:URL options:options];
@@ -715,7 +896,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 @implementation ThirdPartySniffer
 
 - (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl withOptions:(id)options {
-    if (aUrl) {
+    if (aUrl.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString];
     }
     return [self sniff_ijk_initWithContentURL:aUrl withOptions:options];
@@ -757,7 +938,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 }
 
 + (instancetype)sniff_pl_playerWithURL:(NSURL *)URL option:(id)option {
-    if (URL) {
+    if (URL.absoluteString) {
         [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
     }
     return [self sniff_pl_playerWithURL:URL option:option];
