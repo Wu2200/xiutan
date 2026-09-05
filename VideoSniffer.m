@@ -52,7 +52,6 @@
         if ([win isKindOfClass:[SnifferOverlayWindow class]]) {
             CGFloat ratio = [[SnifferManager sharedManager] loadPositionRatio];
             CGFloat targetCenterY = ratio * size.height;
-
             UIView *container = win.buttonsContainer;
             if (container) {
                 CGFloat w = container.frame.size.width;
@@ -811,4 +810,198 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 }
 
 - (void)sniff_replaceCurrentItemWithPlayerItem:(AVPlayerItem *)item {
-    if (item && [item.asset isKindOfClass:[This request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasing your prompt. You can [send feedback](https://ai.google.dev/gemini-api/docs/troubleshooting#file-bug) or read more about [our policies here](https://policies.google.com/terms/generative-ai/use-policy).
+    if (item && [item.asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)item.asset).URL;
+        if (u.absoluteString) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
+    }
+    [self sniff_replaceCurrentItemWithPlayerItem:item];
+}
+
+@end
+
+@interface AVPlayerItem (Sniffer)
+@end
+
+@implementation AVPlayerItem (Sniffer)
+
++ (instancetype)sniff_playerItemWithURL:(NSURL *)URL {
+    if (URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_playerItemWithURL:URL];
+}
+
++ (instancetype)sniff_playerItemWithAsset:(AVAsset *)asset {
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)asset).URL;
+        if (u.absoluteString) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
+    }
+    return [self sniff_playerItemWithAsset:asset];
+}
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL {
+    if (URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL];
+}
+
+- (instancetype)sniff_initWithAsset:(AVAsset *)asset {
+    if ([asset isKindOfClass:[AVURLAsset class]]) {
+        NSURL *u = ((AVURLAsset *)asset).URL;
+        if (u.absoluteString) {
+            [[SnifferManager sharedManager] captureUrl:u.absoluteString];
+        }
+    }
+    return [self sniff_initWithAsset:asset];
+}
+
+@end
+
+@interface AVURLAsset (Sniffer)
+@end
+
+@implementation AVURLAsset (Sniffer)
+
++ (instancetype)sniff_URLAssetWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
+    if (URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_URLAssetWithURL:URL options:options];
+}
+
+- (instancetype)sniff_initWithURL:(NSURL *)URL options:(NSDictionary<NSString *,id> *)options {
+    if (URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_initWithURL:URL options:options];
+}
+
+@end
+
+@interface ThirdPartySniffer : NSObject
+@end
+
+@implementation ThirdPartySniffer
+
+- (instancetype)sniff_ijk_initWithContentURL:(NSURL *)aUrl withOptions:(id)options {
+    if (aUrl.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:aUrl.absoluteString];
+    }
+    return [self sniff_ijk_initWithContentURL:aUrl withOptions:options];
+}
+
+- (instancetype)sniff_ijk_initWithContentURLString:(NSString *)aUrlStr withOptions:(id)options {
+    if (aUrlStr) {
+        [[SnifferManager sharedManager] captureUrl:aUrlStr];
+    }
+    return [self sniff_ijk_initWithContentURLString:aUrlStr withOptions:options];
+}
+
+- (void)sniff_ali_setUrl:(NSString *)url {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    [self sniff_ali_setUrl:url];
+}
+
+- (int)sniff_txvod_startPlay:(NSString *)url {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    return [self sniff_txvod_startPlay:url];
+}
+
+- (int)sniff_txvod_startVodPlay:(NSString *)url {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    return [self sniff_txvod_startVodPlay:url];
+}
+
+- (int)sniff_txlive_startPlay:(NSString *)url type:(int)playType {
+    if (url) {
+        [[SnifferManager sharedManager] captureUrl:url];
+    }
+    return [self sniff_txlive_startPlay:url type:playType];
+}
+
++ (instancetype)sniff_pl_playerWithURL:(NSURL *)URL option:(id)option {
+    if (URL.absoluteString) {
+        [[SnifferManager sharedManager] captureUrl:URL.absoluteString];
+    }
+    return [self sniff_pl_playerWithURL:URL option:option];
+}
+
+@end
+
+static void HookThirdParty(NSString *className, SEL origSel, SEL dummySel) {
+    Class cls = NSClassFromString(className);
+    if (!cls) {
+        return;
+    }
+    Method dummy = class_getInstanceMethod([ThirdPartySniffer class], dummySel);
+    Method orig = class_getInstanceMethod(cls, origSel);
+    if (!dummy || !orig) {
+        return;
+    }
+    class_addMethod(cls, dummySel, method_getImplementation(dummy), method_getTypeEncoding(dummy));
+    SwizzleMethod(cls, origSel, dummySel);
+}
+
+static void HookThirdPartyClassMethod(NSString *className, SEL origSel, SEL dummySel) {
+    Class cls = NSClassFromString(className);
+    if (!cls) {
+        return;
+    }
+    Method dummy = class_getClassMethod([ThirdPartySniffer class], dummySel);
+    Method orig = class_getClassMethod(cls, origSel);
+    if (!dummy || !orig) {
+        return;
+    }
+    Class metaClass = object_getClass((id)cls);
+    class_addMethod(metaClass, dummySel, method_getImplementation(dummy), method_getTypeEncoding(dummy));
+    SwizzleClassMethod(cls, origSel, dummySel);
+}
+
+__attribute__((constructor)) static void SnifferInit(void) {
+    SwizzleMethod([UIViewController class], @selector(viewDidAppear:), @selector(sniff_viewDidAppear:));
+
+    SwizzleClassMethod([NSURL class], @selector(URLWithString:), @selector(sniff_URLWithString:));
+    SwizzleClassMethod([NSURL class], @selector(URLWithString:relativeToURL:), @selector(sniff_URLWithString:relativeToURL:));
+    SwizzleMethod([NSURL class], @selector(initWithString:), @selector(sniff_initWithString:));
+    SwizzleMethod([NSURL class], @selector(initWithString:relativeToURL:), @selector(sniff_initWithString:relativeToURL:));
+
+    SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
+    SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
+
+    SwizzleClassMethod([AVAsset class], @selector(assetWithURL:), @selector(sniff_assetWithURL:));
+
+    SwizzleClassMethod([AVPlayer class], @selector(playerWithURL:), @selector(sniff_playerWithURL:));
+    SwizzleClassMethod([AVPlayer class], @selector(playerWithPlayerItem:), @selector(sniff_playerWithPlayerItem:));
+    SwizzleMethod([AVPlayer class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+    SwizzleMethod([AVPlayer class], @selector(initWithPlayerItem:), @selector(sniff_initWithPlayerItem:));
+    SwizzleMethod([AVPlayer class], @selector(replaceCurrentItemWithPlayerItem:), @selector(sniff_replaceCurrentItemWithPlayerItem:));
+
+    SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithURL:), @selector(sniff_playerItemWithURL:));
+    SwizzleClassMethod([AVPlayerItem class], @selector(playerItemWithAsset:), @selector(sniff_playerItemWithAsset:));
+    SwizzleMethod([AVPlayerItem class], @selector(initWithURL:), @selector(sniff_initWithURL:));
+    SwizzleMethod([AVPlayerItem class], @selector(initWithAsset:), @selector(sniff_initWithAsset:));
+
+    SwizzleClassMethod([AVURLAsset class], @selector(URLAssetWithURL:options:), @selector(sniff_URLAssetWithURL:options:));
+    SwizzleMethod([AVURLAsset class], @selector(initWithURL:options:), @selector(sniff_initWithURL:options:));
+
+    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURL:withOptions:), @selector(sniff_ijk_initWithContentURL:withOptions:));
+    HookThirdParty(@"IJKFFMoviePlayerController", @selector(initWithContentURLString:withOptions:), @selector(sniff_ijk_initWithContentURLString:withOptions:));
+    HookThirdParty(@"AliPlayer", @selector(setUrl:), @selector(sniff_ali_setUrl:));
+    HookThirdParty(@"TXVodPlayer", @selector(startPlay:), @selector(sniff_txvod_startPlay:));
+    HookThirdParty(@"TXVodPlayer", @selector(startVodPlay:), @selector(sniff_txvod_startVodPlay:));
+    HookThirdParty(@"TXLivePlayer", @selector(startPlay:type:), @selector(sniff_txlive_startPlay:type:));
+    HookThirdPartyClassMethod(@"PLPlayer", @selector(playerWithURL:option:), @selector(sniff_pl_playerWithURL:option:));
+
+    [[SnifferManager sharedManager] registerNotifications];
+}
