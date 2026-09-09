@@ -212,37 +212,9 @@
 
 @end
 
-@interface SnifferPanelContainerView : UIView
-@end
-
-@implementation SnifferPanelContainerView
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    if (self.superview) {
-        CGFloat superW = self.superview.bounds.size.width;
-        CGFloat superH = self.superview.bounds.size.height;
-        CGFloat w = self.bounds.size.width;
-        CGFloat h = self.bounds.size.height;
-
-        double ratio = [[NSUserDefaults standardUserDefaults] doubleForKey:@"Sniffer_Buttons_PositionRatio_Y"];
-        if (ratio <= 0.05 || ratio >= 0.95) {
-            ratio = 0.45;
-        }
-
-        CGFloat safeY = MIN(MAX(ratio * superH - h / 2.0, 40), superH - h - 40);
-        CGRect f = self.frame;
-        f.origin.x = superW - w - 12;
-        f.origin.y = safeY;
-        self.frame = f;
-    }
-}
-
-@end
-
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, copy) NSString *latestMediaUrl;
-@property (nonatomic, strong) SnifferPanelContainerView *buttonsContainer;
+@property (nonatomic, strong) UIView *buttonsContainer;
 @property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
@@ -485,9 +457,27 @@
 
     NSArray<NSString *> *domains = self.customDomains;
     if (domains.count > 0) {
-        for (NSString *d in domains) {
-            if ([lower containsString:d]) {
-                return YES;
+        NSString *host = nil;
+        NSRange schemeRange = [lower rangeOfString:@"://"];
+        if (schemeRange.location != NSNotFound) {
+            NSString *afterScheme = [lower substringFromIndex:schemeRange.location + 3];
+            NSRange slashRange = [afterScheme rangeOfString:@"/"];
+            if (slashRange.location != NSNotFound) {
+                host = [afterScheme substringToIndex:slashRange.location];
+            } else {
+                host = afterScheme;
+            }
+            NSRange colonRange = [host rangeOfString:@":"];
+            if (colonRange.location != NSNotFound) {
+                host = [host substringToIndex:colonRange.location];
+            }
+        }
+
+        if (host && host.length > 0) {
+            for (NSString *d in domains) {
+                if ([host isEqualToString:d] || [host hasSuffix:[NSString stringWithFormat:@".%@", d]]) {
+                    return YES;
+                }
             }
         }
     }
@@ -582,7 +572,13 @@
             CGFloat refreshD = 28;
             CGFloat totalH = btnH * 4 + spacing * 4 + refreshD;
 
-            SnifferPanelContainerView *container = [[SnifferPanelContainerView alloc] initWithFrame:CGRectMake(hostWindow.bounds.size.width - btnW - 12, 100, btnW, totalH)];
+            CGFloat screenW = hostWindow.bounds.size.width;
+            CGFloat screenH = hostWindow.bounds.size.height;
+            CGFloat ratio = [self loadPositionRatio];
+            CGFloat targetCenterY = ratio * screenH;
+            CGFloat safeY = MIN(MAX(targetCenterY - totalH / 2.0, 40), screenH - totalH - 40);
+
+            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(screenW - btnW - 12, safeY, btnW, totalH)];
             container.backgroundColor = [UIColor clearColor];
             container.hidden = YES;
             container.alpha = 0.0;
@@ -652,12 +648,9 @@
             self.buttonsContainer = container;
         }
 
-        if (self.buttonsContainer.superview != hostWindow) {
-            [self.buttonsContainer removeFromSuperview];
+        if (self.buttonsContainer.superview == nil) {
             [hostWindow addSubview:self.buttonsContainer];
         }
-        [self.buttonsContainer setNeedsLayout];
-        [hostWindow bringSubviewToFront:self.buttonsContainer];
     });
 }
 
@@ -716,19 +709,13 @@
         return;
     }
 
-    UIWindow *hostWindow = container.window ?: [self findHostKeyWindow];
-    if (hostWindow && container.superview == hostWindow) {
-        [hostWindow bringSubviewToFront:container];
-    }
-    [container setNeedsLayout];
-
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
-        [UIView animateWithDuration:0.3 delay:0.05 usingSpringWithDamping:0.8 initialSpringVelocity:0.6 options:0 animations:^{
+        [UIView animateWithDuration:0.25 animations:^{
             container.alpha = 1.0;
             container.transform = CGAffineTransformIdentity;
-        } completion:nil];
+        }];
     }
 }
 
@@ -737,7 +724,7 @@
     if (!container || container.hidden) {
         return;
     }
-    [UIView animateWithDuration:0.25 animations:^{
+    [UIView animateWithDuration:0.2 animations:^{
         container.alpha = 0.0;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
     } completion:^(BOOL finished) {
@@ -764,8 +751,8 @@
         CGFloat h = container.bounds.size.height;
         CGFloat safeY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
 
-        [UIView animateWithDuration:0.25 animations:^{
-            container.center = CGPointMake(center.x, safeY);
+        [UIView animateWithDuration:0.2 animations:^{
+            container.center = CGPointMake(container.center.x, safeY);
         } completion:^(BOOL finished) {
             CGFloat ratio = safeY / screenH;
             [self savePositionRatio:ratio];
