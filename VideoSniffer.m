@@ -11,6 +11,7 @@
 @end
 
 @interface SnifferDomainModalView : UIView
+@property (nonatomic, strong) UIView *cardView;
 @property (nonatomic, strong) UITextView *textView;
 @property (nonatomic, copy) void (^onSaveBlock)(NSString *text);
 @property (nonatomic, copy) void (^onCloseBlock)(void);
@@ -22,45 +23,47 @@
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
-        self.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        self.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
         self.alpha = 0.0;
 
-        CGFloat cardW = MIN(frame.size.width - 40, 340);
-        CGFloat cardH = 280;
+        UITapGestureRecognizer *bgTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleBgTap:)];
+        [self addGestureRecognizer:bgTap];
 
-        UIView *card = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width - cardW) / 2.0, (frame.size.height - cardH) / 2.0 - 30, cardW, cardH)];
-        card.backgroundColor = [UIColor clearColor];
-        card.layer.cornerRadius = 18;
-        card.layer.masksToBounds = YES;
-        card.layer.borderWidth = 0.5;
-        card.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.9].CGColor;
-        card.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+        CGFloat cardW = MIN(frame.size.width - 48, 330);
+        CGFloat cardH = 260;
+
+        _cardView = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width - cardW) / 2.0, (frame.size.height - cardH) / 2.0, cardW, cardH)];
+        _cardView.backgroundColor = [UIColor clearColor];
+        _cardView.layer.cornerRadius = 20;
+        _cardView.layer.masksToBounds = YES;
+        _cardView.layer.borderWidth = 0.5;
+        _cardView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.95].CGColor;
 
         UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight];
         UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
-        blurView.frame = card.bounds;
+        blurView.frame = _cardView.bounds;
         blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [card addSubview:blurView];
+        [_cardView addSubview:blurView];
 
-        UIView *tintOverlay = [[UIView alloc] initWithFrame:card.bounds];
+        UIView *tintOverlay = [[UIView alloc] initWithFrame:_cardView.bounds];
         tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.96 alpha:0.85];
-        [card addSubview:tintOverlay];
+        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.96 alpha:0.88];
+        [_cardView addSubview:tintOverlay];
 
         UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, cardW - 32, 20)];
         titleLabel.font = [UIFont boldSystemFontOfSize:15];
         titleLabel.textColor = [UIColor colorWithRed:0.18 green:0.2 blue:0.24 alpha:1.0];
         titleLabel.text = @"嗅探域名放行白名单";
-        [card addSubview:titleLabel];
+        [_cardView addSubview:titleLabel];
 
         UILabel *tipLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, cardW - 32, 16)];
         tipLabel.font = [UIFont systemFontOfSize:11];
         tipLabel.textColor = [UIColor colorWithRed:0.5 green:0.53 blue:0.58 alpha:1.0];
         tipLabel.text = @"支持后缀匹配，多个域名用逗号或换行分隔";
-        [card addSubview:tipLabel];
+        [_cardView addSubview:tipLabel];
 
-        _textView = [[UITextView alloc] initWithFrame:CGRectMake(16, 58, cardW - 32, 150)];
-        _textView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.65];
+        _textView = [[UITextView alloc] initWithFrame:CGRectMake(16, 56, cardW - 32, 134)];
+        _textView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.75];
         _textView.layer.cornerRadius = 10;
         _textView.layer.borderWidth = 0.5;
         _textView.layer.borderColor = [UIColor colorWithWhite:0.0 alpha:0.08].CGColor;
@@ -68,61 +71,118 @@
         _textView.textColor = [UIColor colorWithRed:0.2 green:0.22 blue:0.26 alpha:1.0];
         _textView.autocapitalizationType = UITextAutocapitalizationTypeNone;
         _textView.autocorrectionType = UITextAutocorrectionTypeNo;
-        [card addSubview:_textView];
+        _textView.textContainerInset = UIEdgeInsetsMake(8, 8, 8, 8);
+        [_cardView addSubview:_textView];
+
+        CGFloat btnY = cardH - 52;
+        CGFloat btnH = 36;
+        CGFloat btnW = (cardW - 32 - 16) / 3.0;
 
         UIButton *cancelBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        cancelBtn.frame = CGRectMake(16, cardH - 52, (cardW - 42) / 3.0, 36);
-        cancelBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.91 blue:0.93 alpha:1.0];
-        cancelBtn.layer.cornerRadius = 8;
+        cancelBtn.frame = CGRectMake(16, btnY, btnW, btnH);
+        cancelBtn.backgroundColor = [UIColor colorWithRed:0.91 green:0.92 blue:0.94 alpha:1.0];
+        cancelBtn.layer.cornerRadius = 9;
         cancelBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         [cancelBtn setTitle:@"取消" forState:UIControlStateNormal];
-        [cancelBtn setTitleColor:[UIColor colorWithRed:0.3 green:0.32 blue:0.36 alpha:1.0] forState:UIControlStateNormal];
+        [cancelBtn setTitleColor:[UIColor colorWithRed:0.35 green:0.38 blue:0.42 alpha:1.0] forState:UIControlStateNormal];
         [cancelBtn addTarget:self action:@selector(cancelTap) forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:cancelBtn];
+        [_cardView addSubview:cancelBtn];
 
         UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        clearBtn.frame = CGRectMake(16 + (cardW - 42) / 3.0 + 5, cardH - 52, (cardW - 42) / 3.0, 36);
-        clearBtn.backgroundColor = [UIColor colorWithRed:0.95 green:0.9 blue:0.9 alpha:1.0];
-        clearBtn.layer.cornerRadius = 8;
+        clearBtn.frame = CGRectMake(16 + btnW + 8, btnY, btnW, btnH);
+        clearBtn.backgroundColor = [UIColor colorWithRed:0.96 green:0.91 blue:0.91 alpha:1.0];
+        clearBtn.layer.cornerRadius = 9;
         clearBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
         [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
-        [clearBtn setTitleColor:[UIColor colorWithRed:0.8 green:0.25 blue:0.25 alpha:1.0] forState:UIControlStateNormal];
+        [clearBtn setTitleColor:[UIColor colorWithRed:0.82 green:0.28 blue:0.28 alpha:1.0] forState:UIControlStateNormal];
         [clearBtn addTarget:self action:@selector(clearTap) forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:clearBtn];
+        [_cardView addSubview:clearBtn];
 
         UIButton *saveBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        saveBtn.frame = CGRectMake(cardW - 16 - (cardW - 42) / 3.0, cardH - 52, (cardW - 42) / 3.0, 36);
-        saveBtn.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.95 alpha:1.0];
-        saveBtn.layer.cornerRadius = 8;
+        saveBtn.frame = CGRectMake(16 + (btnW + 8) * 2, btnY, btnW, btnH);
+        saveBtn.backgroundColor = [UIColor colorWithRed:0.12 green:0.52 blue:0.96 alpha:1.0];
+        saveBtn.layer.cornerRadius = 9;
         saveBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
         [saveBtn setTitle:@"保存" forState:UIControlStateNormal];
         [saveBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         [saveBtn addTarget:self action:@selector(saveTap) forControlEvents:UIControlEventTouchUpInside];
-        [card addSubview:saveBtn];
+        [_cardView addSubview:saveBtn];
 
-        [self addSubview:card];
+        [self addSubview:_cardView];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
     }
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)handleBgTap:(UITapGestureRecognizer *)tap {
+    CGPoint p = [tap locationInView:self];
+    if (CGRectContainsPoint(self.cardView.frame, p)) {
+        return;
+    }
+    if ([self.textView isFirstResponder]) {
+        [self.textView resignFirstResponder];
+    } else {
+        [self cancelTap];
+    }
+}
+
+- (void)keyboardWillShow:(NSNotification *)note {
+    CGRect kbFrame = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGFloat duration = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    CGFloat screenH = self.bounds.size.height;
+    CGFloat cardH = self.cardView.frame.size.height;
+    CGFloat targetCenterY = (screenH - kbFrame.size.height) / 2.0;
+
+    [UIView animateWithDuration:duration > 0 ? duration : 0.25 animations:^{
+        CGPoint c = self.cardView.center;
+        c.y = MAX(targetCenterY, cardH / 2.0 + 20);
+        self.cardView.center = c;
+    }];
+}
+
+- (void)keyboardWillHide:(NSNotification *)note {
+    CGFloat duration = [note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    CGFloat screenH = self.bounds.size.height;
+
+    [UIView animateWithDuration:duration > 0 ? duration : 0.25 animations:^{
+        CGPoint c = self.cardView.center;
+        c.y = screenH / 2.0;
+        self.cardView.center = c;
+    }];
 }
 
 - (void)showInView:(UIView *)parentView initialText:(NSString *)text {
     self.frame = parentView.bounds;
     self.textView.text = text;
+
+    CGFloat cardW = MIN(self.bounds.size.width - 48, 330);
+    CGFloat cardH = 260;
+    self.cardView.frame = CGRectMake((self.bounds.size.width - cardW) / 2.0, (self.bounds.size.height - cardH) / 2.0, cardW, cardH);
+
     [parentView addSubview:self];
     [parentView bringSubviewToFront:self];
 
-    [UIView animateWithDuration:0.25 animations:^{
+    self.cardView.transform = CGAffineTransformMakeScale(0.92, 0.92);
+    [UIView animateWithDuration:0.25 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0.5 options:0 animations:^{
         self.alpha = 1.0;
-    }];
-    [self.textView becomeFirstResponder];
+        self.cardView.transform = CGAffineTransformIdentity;
+    } completion:nil];
 }
 
 - (void)dismissSelf {
     [self.textView resignFirstResponder];
     [UIView animateWithDuration:0.2 animations:^{
         self.alpha = 0.0;
+        self.cardView.transform = CGAffineTransformMakeScale(0.92, 0.92);
     } completion:^(BOOL finished) {
         [self removeFromSuperview];
+        self.cardView.transform = CGAffineTransformIdentity;
     }];
 }
 
