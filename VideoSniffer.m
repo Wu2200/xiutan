@@ -213,12 +213,12 @@
 @end
 
 @interface SnifferPanelContainerView : UIView
-- (void)repositionInSuperview;
+- (void)updateFrameWithoutRecursion;
 @end
 
 @implementation SnifferPanelContainerView
 
-- (void)repositionInSuperview {
+- (void)updateFrameWithoutRecursion {
     if (!self.superview) {
         return;
     }
@@ -232,16 +232,17 @@
         ratio = 0.45;
     }
 
-    CGFloat safeY = MIN(MAX(ratio * superH - h / 2.0, 40), superH - h - 40);
-    CGRect f = self.frame;
-    f.origin.x = superW - w - 12;
-    f.origin.y = safeY;
-    self.frame = f;
-}
+    CGFloat safeInsetRight = 12;
+    if (@available(iOS 11.0, *)) {
+        safeInsetRight = MAX(self.superview.safeAreaInsets.right + 8, 12);
+    }
 
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    [self repositionInSuperview];
+    CGFloat safeY = MIN(MAX(ratio * superH - h / 2.0, 40), superH - h - 40);
+    CGRect targetFrame = CGRectMake(superW - w - safeInsetRight, safeY, w, h);
+
+    if (!CGRectEqualToRect(self.frame, targetFrame)) {
+        self.frame = targetFrame;
+    }
 }
 
 @end
@@ -695,7 +696,7 @@
             [self.buttonsContainer removeFromSuperview];
             [targetView addSubview:self.buttonsContainer];
         }
-        [self.buttonsContainer repositionInSuperview];
+        [self.buttonsContainer updateFrameWithoutRecursion];
         [targetView bringSubviewToFront:self.buttonsContainer];
     });
 }
@@ -763,7 +764,7 @@
 
     if (container.superview) {
         [container.superview bringSubviewToFront:container];
-        [self.buttonsContainer repositionInSuperview];
+        [self.buttonsContainer updateFrameWithoutRecursion];
     }
 
     if (container.hidden || container.alpha < 0.05) {
@@ -809,7 +810,7 @@
         CGFloat safeY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
 
         [UIView animateWithDuration:0.25 animations:^{
-            container.center = CGPointMake(container.center.x, safeY);
+            container.center = CGPointMake(center.x, safeY);
         } completion:^(BOOL finished) {
             CGFloat ratio = safeY / screenH;
             [self savePositionRatio:ratio];
