@@ -15,6 +15,8 @@
 @property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
+@property (nonatomic, strong) UILongPressGestureRecognizer *domainSettingGesture;
+@property (nonatomic, strong) NSMutableArray<NSString *> *customDomains;
 @property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
@@ -23,6 +25,8 @@
 - (void)registerNotifications;
 - (void)savePositionRatio:(CGFloat)ratio;
 - (CGFloat)loadPositionRatio;
+- (void)saveCustomDomains:(NSString *)rawString;
+- (NSString *)loadCustomDomainsString;
 @end
 
 @implementation SnifferScriptBridge
@@ -46,8 +50,35 @@
     dispatch_once(&onceToken, ^{
         inst = [[SnifferManager alloc] init];
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
+        inst.customDomains = [NSMutableArray array];
+        [inst reloadCustomDomains];
     });
     return inst;
+}
+
+- (void)reloadCustomDomains {
+    [self.customDomains removeAllObjects];
+    NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey:@"Sniffer_CustomDomains"];
+    if (saved && saved.length > 0) {
+        NSString *normalized = [saved stringByReplacingOccurrencesOfString:@"，" withString:@","];
+        NSArray *items = [normalized componentsSeparatedByString:@","];
+        for (NSString *item in items) {
+            NSString *trimmed = [item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
+            if (trimmed.length > 0) {
+                [self.customDomains addObject:trimmed];
+            }
+        }
+    }
+}
+
+- (void)saveCustomDomains:(NSString *)rawString {
+    [[NSUserDefaults standardUserDefaults] setObject:rawString forKey:@"Sniffer_CustomDomains"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [self reloadCustomDomains];
+}
+
+- (NSString *)loadCustomDomainsString {
+    return [[NSUserDefaults standardUserDefaults] stringForKey:@"Sniffer_CustomDomains"] ?: @"";
 }
 
 - (void)savePositionRatio:(CGFloat)ratio {
@@ -68,13 +99,13 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeKeyNotification object:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
         [self setupFloatingUI];
-        [self attachGlobalToggleGesture];
+        [self attachGlobalGestures];
     });
 }
 
 - (void)onActive {
     [self setupFloatingUI];
-    [self attachGlobalToggleGesture];
+    [self attachGlobalGestures];
 }
 
 - (UIWindow *)findHostKeyWindow {
@@ -106,7 +137,7 @@
     return targetWindow;
 }
 
-- (void)attachGlobalToggleGesture {
+- (void)attachGlobalGestures {
     UIWindow *targetWindow = [self findHostKeyWindow];
     if (!targetWindow) {
         return;
@@ -120,9 +151,22 @@
         self.toggleGesture.cancelsTouchesInView = NO;
     }
 
+    if (!self.domainSettingGesture) {
+        self.domainSettingGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleDomainSettingGesture:)];
+        self.domainSettingGesture.numberOfTouchesRequired = 3;
+        self.domainSettingGesture.minimumPressDuration = 1.0;
+        self.domainSettingGesture.delegate = self;
+        self.domainSettingGesture.cancelsTouchesInView = NO;
+    }
+
     if (self.toggleGesture.view != targetWindow) {
         [self.toggleGesture.view removeGestureRecognizer:self.toggleGesture];
         [targetWindow addGestureRecognizer:self.toggleGesture];
+    }
+
+    if (self.domainSettingGesture.view != targetWindow) {
+        [self.domainSettingGesture.view removeGestureRecognizer:self.domainSettingGesture];
+        [targetWindow addGestureRecognizer:self.domainSettingGesture];
     }
 }
 
@@ -145,6 +189,55 @@
             [self hideButtonsWithAnimation];
         }
     }
+}
+
+- (void)handleDomainSettingGesture:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+        [feedback impactOccurred];
+        [self showDomainSettingAlert];
+    }
+}
+
+- (void)showDomainSettingAlert {
+    UIWindow *window = [self findHostKeyWindow];
+    if (!window) {
+        return;
+    }
+
+    UIViewController *topVC = window.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
+    }
+
+    NSString *currentDomains = [self loadCustomDomainsString];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"自定义嗅探域名"
+                                                                   message:@"输入需要放行的域名后缀，多个用逗号隔开\n命中该域名的链接将无条件被嗅探"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+        textField.placeholder = @"例如: xhscdn.com, bytecdn.cn";
+        textField.text = currentDomains;
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        textField.autocorrectionType = UITextAutocorrectionTypeNo;
+    }];
+
+    UIAlertAction *saveAction = [UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        UITextField *tf = alert.textFields.firstObject;
+        NSString *text = tf.text ?: @"";
+        [self saveCustomDomains:text];
+
+        UIImpactFeedbackGenerator *f = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [f impactOccurred];
+    }];
+
+    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil];
+
+    [alert addAction:saveAction];
+    [alert addAction:cancelAction];
+
+    [topVC presentViewController:alert animated:YES completion:nil];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -172,6 +265,17 @@
 
 - (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
+
+    if (self.customDomains.count > 0) {
+        NSURL *u = [NSURL URLWithString:urlStr];
+        NSString *host = u.host.lowercaseString;
+        for (NSString *d in self.customDomains) {
+            if ([host hasSuffix:d] || [lower containsString:d]) {
+                return YES;
+            }
+        }
+    }
+
     NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
     for (NSString *b in blackList) {
         if ([lower containsString:b]) {
