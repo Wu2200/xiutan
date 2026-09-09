@@ -5,8 +5,151 @@
 #import <objc/runtime.h>
 
 @class SnifferScriptBridge;
+@class SnifferDomainModalView;
 
 @interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
+@end
+
+@interface SnifferDomainModalView : UIView
+@property (nonatomic, strong) UITextView *textView;
+@property (nonatomic, copy) void (^onSaveBlock)(NSString *text);
+@property (nonatomic, copy) void (^onCloseBlock)(void);
+- (void)showInView:(UIView *)parentView initialText:(NSString *)text;
+@end
+
+@implementation SnifferDomainModalView
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        self.alpha = 0.0;
+
+        CGFloat cardW = MIN(frame.size.width - 40, 340);
+        CGFloat cardH = 280;
+
+        UIView *card = [[UIView alloc] initWithFrame:CGRectMake((frame.size.width - cardW) / 2.0, (frame.size.height - cardH) / 2.0 - 30, cardW, cardH)];
+        card.backgroundColor = [UIColor clearColor];
+        card.layer.cornerRadius = 18;
+        card.layer.masksToBounds = YES;
+        card.layer.borderWidth = 0.5;
+        card.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.9].CGColor;
+        card.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+
+        UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialLight];
+        UIVisualEffectView *blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+        blurView.frame = card.bounds;
+        blurView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [card addSubview:blurView];
+
+        UIView *tintOverlay = [[UIView alloc] initWithFrame:card.bounds];
+        tintOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        tintOverlay.backgroundColor = [UIColor colorWithRed:0.98 green:0.97 blue:0.96 alpha:0.85];
+        [card addSubview:tintOverlay];
+
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 14, cardW - 32, 20)];
+        titleLabel.font = [UIFont boldSystemFontOfSize:15];
+        titleLabel.textColor = [UIColor colorWithRed:0.18 green:0.2 blue:0.24 alpha:1.0];
+        titleLabel.text = @"嗅探域名放行白名单";
+        [card addSubview:titleLabel];
+
+        UILabel *tipLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 36, cardW - 32, 16)];
+        tipLabel.font = [UIFont systemFontOfSize:11];
+        tipLabel.textColor = [UIColor colorWithRed:0.5 green:0.53 blue:0.58 alpha:1.0];
+        tipLabel.text = @"支持后缀匹配，多个域名用逗号或换行分隔";
+        [card addSubview:tipLabel];
+
+        _textView = [[UITextView alloc] initWithFrame:CGRectMake(16, 58, cardW - 32, 150)];
+        _textView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.65];
+        _textView.layer.cornerRadius = 10;
+        _textView.layer.borderWidth = 0.5;
+        _textView.layer.borderColor = [UIColor colorWithWhite:0.0 alpha:0.08].CGColor;
+        _textView.font = [UIFont systemFontOfSize:13];
+        _textView.textColor = [UIColor colorWithRed:0.2 green:0.22 blue:0.26 alpha:1.0];
+        _textView.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        _textView.autocorrectionType = UITextAutocorrectionTypeNo;
+        [card addSubview:_textView];
+
+        UIButton *cancelBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        cancelBtn.frame = CGRectMake(16, cardH - 52, (cardW - 42) / 3.0, 36);
+        cancelBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.91 blue:0.93 alpha:1.0];
+        cancelBtn.layer.cornerRadius = 8;
+        cancelBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        [cancelBtn setTitle:@"取消" forState:UIControlStateNormal];
+        [cancelBtn setTitleColor:[UIColor colorWithRed:0.3 green:0.32 blue:0.36 alpha:1.0] forState:UIControlStateNormal];
+        [cancelBtn addTarget:self action:@selector(cancelTap) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:cancelBtn];
+
+        UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        clearBtn.frame = CGRectMake(16 + (cardW - 42) / 3.0 + 5, cardH - 52, (cardW - 42) / 3.0, 36);
+        clearBtn.backgroundColor = [UIColor colorWithRed:0.95 green:0.9 blue:0.9 alpha:1.0];
+        clearBtn.layer.cornerRadius = 8;
+        clearBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        [clearBtn setTitle:@"清空" forState:UIControlStateNormal];
+        [clearBtn setTitleColor:[UIColor colorWithRed:0.8 green:0.25 blue:0.25 alpha:1.0] forState:UIControlStateNormal];
+        [clearBtn addTarget:self action:@selector(clearTap) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:clearBtn];
+
+        UIButton *saveBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        saveBtn.frame = CGRectMake(cardW - 16 - (cardW - 42) / 3.0, cardH - 52, (cardW - 42) / 3.0, 36);
+        saveBtn.backgroundColor = [UIColor colorWithRed:0.1 green:0.5 blue:0.95 alpha:1.0];
+        saveBtn.layer.cornerRadius = 8;
+        saveBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        [saveBtn setTitle:@"保存" forState:UIControlStateNormal];
+        [saveBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [saveBtn addTarget:self action:@selector(saveTap) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:saveBtn];
+
+        [self addSubview:card];
+    }
+    return self;
+}
+
+- (void)showInView:(UIView *)parentView initialText:(NSString *)text {
+    self.frame = parentView.bounds;
+    self.textView.text = text;
+    [parentView addSubview:self];
+    [parentView bringSubviewToFront:self];
+
+    [UIView animateWithDuration:0.25 animations:^{
+        self.alpha = 1.0;
+    }];
+    [self.textView becomeFirstResponder];
+}
+
+- (void)dismissSelf {
+    [self.textView resignFirstResponder];
+    [UIView animateWithDuration:0.2 animations:^{
+        self.alpha = 0.0;
+    } completion:^(BOOL finished) {
+        [self removeFromSuperview];
+    }];
+}
+
+- (void)cancelTap {
+    UIImpactFeedbackGenerator *f = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [f impactOccurred];
+    [self dismissSelf];
+    if (self.onCloseBlock) {
+        self.onCloseBlock();
+    }
+}
+
+- (void)clearTap {
+    UIImpactFeedbackGenerator *f = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [f impactOccurred];
+    self.textView.text = @"";
+}
+
+- (void)saveTap {
+    UIImpactFeedbackGenerator *f = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [f impactOccurred];
+    if (self.onSaveBlock) {
+        self.onSaveBlock(self.textView.text ?: @"");
+    }
+    [self dismissSelf];
+}
+
 @end
 
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
@@ -15,8 +158,8 @@
 @property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
-@property (nonatomic, strong) UILongPressGestureRecognizer *domainSettingGesture;
 @property (nonatomic, strong) NSMutableArray<NSString *> *customDomains;
+@property (nonatomic, strong) SnifferDomainModalView *domainModalView;
 @property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
@@ -61,6 +204,7 @@
     NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey:@"Sniffer_CustomDomains"];
     if (saved && saved.length > 0) {
         NSString *normalized = [saved stringByReplacingOccurrencesOfString:@"，" withString:@","];
+        normalized = [normalized stringByReplacingOccurrencesOfString:@"\n" withString:@","];
         NSArray *items = [normalized componentsSeparatedByString:@","];
         for (NSString *item in items) {
             NSString *trimmed = [item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
@@ -151,26 +295,23 @@
         self.toggleGesture.cancelsTouchesInView = NO;
     }
 
-    if (!self.domainSettingGesture) {
-        self.domainSettingGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleDomainSettingGesture:)];
-        self.domainSettingGesture.numberOfTouchesRequired = 3;
-        self.domainSettingGesture.minimumPressDuration = 1.0;
-        self.domainSettingGesture.delegate = self;
-        self.domainSettingGesture.cancelsTouchesInView = NO;
-    }
-
     if (self.toggleGesture.view != targetWindow) {
         [self.toggleGesture.view removeGestureRecognizer:self.toggleGesture];
         [targetWindow addGestureRecognizer:self.toggleGesture];
     }
-
-    if (self.domainSettingGesture.view != targetWindow) {
-        [self.domainSettingGesture.view removeGestureRecognizer:self.domainSettingGesture];
-        [targetWindow addGestureRecognizer:self.domainSettingGesture];
-    }
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if (self.refreshButton) {
+        CGPoint p = [touch locationInView:self.refreshButton];
+        if ([self.refreshButton pointInside:p withEvent:nil]) {
+            return NO;
+        }
+    }
     return YES;
 }
 
@@ -191,53 +332,29 @@
     }
 }
 
-- (void)handleDomainSettingGesture:(UILongPressGestureRecognizer *)gesture {
+- (void)handleRefreshLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) {
         UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
         [feedback impactOccurred];
-        [self showDomainSettingAlert];
+        [self openDomainManagerCard];
     }
 }
 
-- (void)showDomainSettingAlert {
+- (void)openDomainManagerCard {
     UIWindow *window = [self findHostKeyWindow];
     if (!window) {
         return;
     }
 
-    UIViewController *topVC = window.rootViewController;
-    while (topVC.presentedViewController) {
-        topVC = topVC.presentedViewController;
+    if (!self.domainModalView) {
+        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:window.bounds];
+        __weak typeof(self) weakSelf = self;
+        self.domainModalView.onSaveBlock = ^(NSString *text) {
+            [weakSelf saveCustomDomains:text];
+        };
     }
 
-    NSString *currentDomains = [self loadCustomDomainsString];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"自定义嗅探域名"
-                                                                   message:@"输入需要放行的域名后缀，多个用逗号隔开\n命中该域名的链接将无条件被嗅探"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
-        textField.placeholder = @"例如: xhscdn.com, bytecdn.cn";
-        textField.text = currentDomains;
-        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
-        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        textField.autocorrectionType = UITextAutocorrectionTypeNo;
-    }];
-
-    UIAlertAction *saveAction = [UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        UITextField *tf = alert.textFields.firstObject;
-        NSString *text = tf.text ?: @"";
-        [self saveCustomDomains:text];
-
-        UIImpactFeedbackGenerator *f = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-        [f impactOccurred];
-    }];
-
-    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil];
-
-    [alert addAction:saveAction];
-    [alert addAction:cancelAction];
-
-    [topVC presentViewController:alert animated:YES completion:nil];
+    [self.domainModalView showInView:window initialText:[self loadCustomDomainsString]];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -373,6 +490,7 @@
             container.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
 
             UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanContainer:)];
+            pan.delegate = self;
             [container addGestureRecognizer:pan];
 
             NSArray *titles = @[@"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
@@ -426,6 +544,10 @@
             [refreshButton addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
             [refreshButton addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
             [refreshButton addTarget:self action:@selector(refreshCandidateTap:) forControlEvents:UIControlEventTouchUpInside];
+
+            UILongPressGestureRecognizer *refreshLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleRefreshLongPress:)];
+            refreshLongPress.minimumPressDuration = 0.8;
+            [refreshButton addGestureRecognizer:refreshLongPress];
 
             [container addSubview:refreshButton];
             self.refreshButton = refreshButton;
