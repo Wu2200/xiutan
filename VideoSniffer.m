@@ -231,7 +231,7 @@
 - (NSString *)loadCustomDomainsString;
 - (BOOL)isSuspendedHidden;
 - (void)saveSuspendedHidden:(BOOL)hidden;
-- (void)updateContainerLayoutRightNow;
+- (void)forceAlignRightEdge;
 @end
 
 @implementation SnifferScriptBridge
@@ -305,7 +305,7 @@
 - (CGFloat)loadPositionRatio {
     double ratio = [[NSUserDefaults standardUserDefaults] doubleForKey:@"Sniffer_Buttons_PositionRatio_Y"];
     if (ratio <= 0.05 || ratio >= 0.95) {
-        return 0.5;
+        return 0.45;
     }
     return (CGFloat)ratio;
 }
@@ -557,32 +557,42 @@
     [self hideButtonsWithAnimation];
 }
 
-- (void)updateContainerLayoutRightNow {
-    UIWindow *hostWindow = [self findHostKeyWindow];
-    if (!hostWindow || !self.buttonsContainer) {
+- (void)forceAlignRightEdge {
+    if (!self.buttonsContainer || !self.buttonsContainer.superview) {
         return;
     }
 
+    UIView *superV = self.buttonsContainer.superview;
     self.buttonsContainer.transform = CGAffineTransformIdentity;
 
-    CGFloat winW = hostWindow.bounds.size.width;
-    CGFloat winH = hostWindow.bounds.size.height;
-    CGFloat btnW = 82;
+    CGFloat pW = superV.bounds.size.width;
+    CGFloat pH = superV.bounds.size.height;
+    CGFloat btnW = self.buttonsContainer.bounds.size.width;
     CGFloat totalH = self.buttonsContainer.bounds.size.height;
 
-    CGFloat rightInset = 12;
-    if (winW > winH) {
-        rightInset = 44;
+    BOOL isLandscape = (pW > pH);
+    if (!isLandscape) {
+        for (UIView *sub in superV.subviews) {
+            if (CGAffineTransformEqualToTransform(sub.transform, CGAffineTransformMakeRotation(M_PI_2)) ||
+                CGAffineTransformEqualToTransform(sub.transform, CGAffineTransformMakeRotation(-M_PI_2))) {
+                isLandscape = YES;
+                break;
+            }
+        }
     }
+
+    CGFloat rightPadding = isLandscape ? 44.0 : 12.0;
     if (@available(iOS 11.0, *)) {
-        if (hostWindow.safeAreaInsets.right > 0) {
-            rightInset = MAX(hostWindow.safeAreaInsets.right + 8, rightInset);
+        if (superV.safeAreaInsets.right > 0) {
+            rightPadding = MAX(superV.safeAreaInsets.right + 8, rightPadding);
         }
     }
 
     CGFloat ratio = [self loadPositionRatio];
-    CGFloat safeY = MIN(MAX(ratio * winH - totalH / 2.0, 30), winH - totalH - 30);
-    self.buttonsContainer.frame = CGRectMake(winW - btnW - rightInset, safeY, btnW, totalH);
+    CGFloat safeY = MIN(MAX(ratio * pH - totalH / 2.0, 30), pH - totalH - 30);
+    CGFloat targetX = pW - btnW - rightPadding;
+
+    self.buttonsContainer.frame = CGRectMake(targetX, safeY, btnW, totalH);
 }
 
 - (void)setupFloatingUI {
@@ -673,7 +683,7 @@
         [hostWindow addSubview:self.buttonsContainer];
     }
 
-    [self updateContainerLayoutRightNow];
+    [self forceAlignRightEdge];
     [hostWindow bringSubviewToFront:self.buttonsContainer];
 }
 
@@ -738,7 +748,8 @@
         [hostWindow addSubview:container];
     }
 
-    [self updateContainerLayoutRightNow];
+    [self forceAlignRightEdge];
+
     if (hostWindow) {
         [hostWindow bringSubviewToFront:container];
     }
