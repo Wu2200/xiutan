@@ -218,7 +218,7 @@
 @property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
-@property (nonatomic, strong) NSMutableArray<NSString *> *customDomains;
+@property (nonatomic, copy) NSArray<NSString *> *customDomains;
 @property (nonatomic, strong) SnifferDomainModalView *domainModalView;
 @property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
@@ -253,15 +253,15 @@
     dispatch_once(&onceToken, ^{
         inst = [[SnifferManager alloc] init];
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
-        inst.customDomains = [NSMutableArray array];
+        inst.customDomains = @[];
         [inst reloadCustomDomains];
     });
     return inst;
 }
 
 - (void)reloadCustomDomains {
-    [self.customDomains removeAllObjects];
     NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey:@"Sniffer_CustomDomains"];
+    NSMutableArray *arr = [NSMutableArray array];
     if (saved && saved.length > 0) {
         NSString *normalized = [saved stringByReplacingOccurrencesOfString:@"，" withString:@","];
         normalized = [normalized stringByReplacingOccurrencesOfString:@"\n" withString:@","];
@@ -269,10 +269,11 @@
         for (NSString *item in items) {
             NSString *trimmed = [item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].lowercaseString;
             if (trimmed.length > 0) {
-                [self.customDomains addObject:trimmed];
+                [arr addObject:trimmed];
             }
         }
     }
+    self.customDomains = [arr copy];
 }
 
 - (void)saveCustomDomains:(NSString *)rawString {
@@ -443,11 +444,10 @@
 - (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
 
-    if (self.customDomains.count > 0) {
-        NSURL *u = [NSURL URLWithString:urlStr];
-        NSString *host = u.host.lowercaseString;
-        for (NSString *d in self.customDomains) {
-            if ([host hasSuffix:d] || [lower containsString:d]) {
+    NSArray<NSString *> *domains = self.customDomains;
+    if (domains.count > 0) {
+        for (NSString *d in domains) {
+            if ([lower containsString:d]) {
                 return YES;
             }
         }
