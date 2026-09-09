@@ -4,61 +4,25 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 
-@class SnifferOverlayWindow;
 @class SnifferScriptBridge;
-
-@interface SnifferRootViewController : UIViewController
-@end
-
-@interface SnifferOverlayWindow : UIWindow
-@property (nonatomic, strong) UIView *buttonsContainer;
-@property (nonatomic, strong) UIButton *refreshButton;
-@property (nonatomic, assign) BOOL isSuspendedHidden;
-@end
 
 @interface SnifferScriptBridge : NSObject <WKScriptMessageHandler>
 @end
 
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, copy) NSString *latestMediaUrl;
-@property (nonatomic, strong) SnifferOverlayWindow *overlayWindow;
+@property (nonatomic, strong) UIView *buttonsContainer;
+@property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
-@property (nonatomic, weak) UIViewController *lastActiveVC;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
-@property (nonatomic, strong) NSArray<UIButton *> *playerButtons;
+@property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
 - (void)clearMedia;
 - (void)registerNotifications;
-- (void)handleHostPageChanged:(UIViewController *)vc;
 - (void)savePositionRatio:(CGFloat)ratio;
 - (CGFloat)loadPositionRatio;
-@end
-
-@implementation SnifferRootViewController
-- (BOOL)shouldAutorotate {
-    return NO;
-}
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    return UIInterfaceOrientationMaskPortrait;
-}
-- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation {
-    return UIInterfaceOrientationPortrait;
-}
-@end
-
-@implementation SnifferOverlayWindow
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.isSuspendedHidden || !self.buttonsContainer || self.buttonsContainer.hidden || self.buttonsContainer.alpha < 0.05) {
-        return nil;
-    }
-    CGPoint containerPoint = [self convertPoint:point toView:self.buttonsContainer];
-    if ([self.buttonsContainer pointInside:containerPoint withEvent:event]) {
-        return [super hitTest:point withEvent:event];
-    }
-    return nil;
-}
 @end
 
 @implementation SnifferScriptBridge
@@ -101,11 +65,7 @@
 
 - (void)registerNotifications {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIApplicationDidBecomeActiveNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeVisibleNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIWindowDidBecomeKeyNotification object:nil];
-    if (@available(iOS 13.0, *)) {
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UISceneDidActivateNotification object:nil];
-    }
     dispatch_async(dispatch_get_main_queue(), ^{
         [self setupFloatingUI];
         [self attachGlobalToggleGesture];
@@ -117,22 +77,38 @@
     [self attachGlobalToggleGesture];
 }
 
-- (void)attachGlobalToggleGesture {
+- (UIWindow *)findHostKeyWindow {
     UIWindow *targetWindow = nil;
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
             for (UIWindow *w in scene.windows) {
-                if (w != self.overlayWindow && !w.hidden) {
+                if (!w.hidden && w.alpha > 0.01 && w.isKeyWindow) {
                     targetWindow = w;
                     break;
                 }
             }
+            if (!targetWindow) {
+                for (UIWindow *w in scene.windows) {
+                    if (!w.hidden && w.alpha > 0.01) {
+                        targetWindow = w;
+                        break;
+                    }
+                }
+            }
+        }
+        if (targetWindow) {
+            break;
         }
     }
     if (!targetWindow) {
         targetWindow = [UIApplication sharedApplication].windows.firstObject;
     }
-    if (!targetWindow || targetWindow == self.overlayWindow) {
+    return targetWindow;
+}
+
+- (void)attachGlobalToggleGesture {
+    UIWindow *targetWindow = [self findHostKeyWindow];
+    if (!targetWindow) {
         return;
     }
 
@@ -159,35 +135,16 @@
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
 
-        if (self.overlayWindow.isSuspendedHidden) {
-            self.overlayWindow.isSuspendedHidden = NO;
+        if (self.isSuspendedHidden) {
+            self.isSuspendedHidden = NO;
             if (self.latestMediaUrl && self.latestMediaUrl.length > 0) {
                 [self showButtonsWithAnimation];
             }
         } else {
-            self.overlayWindow.isSuspendedHidden = YES;
+            self.isSuspendedHidden = YES;
             [self hideButtonsWithAnimation];
         }
     }
-}
-
-- (void)handleHostPageChanged:(UIViewController *)vc {
-    if (!vc) {
-        return;
-    }
-    if ([vc isKindOfClass:[UIAlertController class]] || [vc isKindOfClass:[SnifferRootViewController class]]) {
-        return;
-    }
-    NSString *className = NSStringFromClass([vc class]);
-    if ([className hasPrefix:@"UIInput"] || [className hasPrefix:@"_"]) {
-        return;
-    }
-
-    if (self.lastActiveVC && self.lastActiveVC != vc) {
-        [self clearMedia];
-    }
-    self.lastActiveVC = vc;
-    [self attachGlobalToggleGesture];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -236,7 +193,7 @@
 }
 
 - (void)rotateRefreshIcon {
-    UIButton *btn = self.overlayWindow.refreshButton;
+    UIButton *btn = self.refreshButton;
     if (!btn) {
         return;
     }
@@ -272,11 +229,11 @@
         BOOL urlChanged = ![self.latestMediaUrl isEqualToString:urlStr];
         self.latestMediaUrl = urlStr;
 
-        if (!self.overlayWindow) {
+        if (!self.buttonsContainer || !self.buttonsContainer.superview) {
             [self setupFloatingUI];
         }
 
-        if (!self.overlayWindow.isSuspendedHidden) {
+        if (!self.isSuspendedHidden) {
             [self showButtonsWithAnimation];
         }
 
@@ -293,70 +250,33 @@
 
 - (void)setupFloatingUI {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindowScene *scene = nil;
-        if (@available(iOS 13.0, *)) {
-            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-                if ([s isKindOfClass:[UIWindowScene class]]) {
-                    UIWindowScene *ws = (UIWindowScene *)s;
-                    if (ws.activationState == UISceneActivationStateForegroundActive) {
-                        scene = ws;
-                        break;
-                    }
-                    if (!scene) {
-                        scene = ws;
-                    }
-                }
-            }
+        UIWindow *hostWindow = [self findHostKeyWindow];
+        if (!hostWindow) {
+            return;
         }
 
-        if (!self.overlayWindow) {
-            if (@available(iOS 13.0, *)) {
-                if (scene) {
-                    self.overlayWindow = [[SnifferOverlayWindow alloc] initWithWindowScene:scene];
-                } else {
-                    self.overlayWindow = [[SnifferOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-                }
-            } else {
-                self.overlayWindow = [[SnifferOverlayWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-            }
-
-            self.overlayWindow.frame = [UIScreen mainScreen].bounds;
-            self.overlayWindow.windowLevel = CGFLOAT_MAX - 100.0;
-            self.overlayWindow.backgroundColor = [UIColor clearColor];
-            self.overlayWindow.isSuspendedHidden = NO;
-
-            SnifferRootViewController *rootVC = [[SnifferRootViewController alloc] init];
-            rootVC.view.backgroundColor = [UIColor clearColor];
-            self.overlayWindow.rootViewController = rootVC;
-
-            CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
-            CGFloat screenH = [UIScreen mainScreen].bounds.size.height;
-            CGFloat ratioY = [self loadPositionRatio];
-            CGFloat targetCenterY = ratioY * screenH;
-
+        if (!self.buttonsContainer) {
             CGFloat btnW = 82;
             CGFloat btnH = 34;
             CGFloat spacing = 8;
             CGFloat refreshD = 28;
             CGFloat totalH = btnH * 4 + spacing * 3 + refreshD + 10;
-            CGFloat containerSafeY = MIN(MAX(targetCenterY - totalH / 2.0, 40), screenH - totalH - 40);
 
-            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(screenW - btnW - 10, containerSafeY, btnW, totalH)];
+            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(hostWindow.bounds.size.width - btnW - 10, (hostWindow.bounds.size.height - totalH) / 2.0, btnW, totalH)];
             container.backgroundColor = [UIColor clearColor];
             container.hidden = YES;
             container.alpha = 0.0;
+            container.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
 
             UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanContainer:)];
             [container addGestureRecognizer:pan];
 
             NSArray *titles = @[@"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
-            NSMutableArray<UIButton *> *btnArray = [NSMutableArray array];
-
             for (NSInteger i = 0; i < titles.count; i++) {
                 NSString *title = titles[i];
                 UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
                 btn.frame = CGRectMake(0, i * (btnH + spacing), btnW, btnH);
-                btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.92];
+                btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
                 btn.layer.cornerRadius = 10;
                 btn.layer.masksToBounds = NO;
                 btn.layer.borderWidth = 0.5;
@@ -383,7 +303,6 @@
                 [btn addTarget:self action:@selector(playerBtnTap:) forControlEvents:UIControlEventTouchUpInside];
 
                 [container addSubview:btn];
-                [btnArray addObject:btn];
             }
 
             UIButton *refreshButton = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -405,20 +324,15 @@
             [refreshButton addTarget:self action:@selector(refreshCandidateTap:) forControlEvents:UIControlEventTouchUpInside];
 
             [container addSubview:refreshButton];
-
-            self.playerButtons = btnArray;
-            self.overlayWindow.buttonsContainer = container;
-            self.overlayWindow.refreshButton = refreshButton;
-            [rootVC.view addSubview:container];
-        } else {
-            if (@available(iOS 13.0, *)) {
-                if (scene && self.overlayWindow.windowScene != scene) {
-                    self.overlayWindow.windowScene = scene;
-                }
-            }
+            self.refreshButton = refreshButton;
+            self.buttonsContainer = container;
         }
 
-        self.overlayWindow.hidden = NO;
+        if (self.buttonsContainer.superview != hostWindow) {
+            [self.buttonsContainer removeFromSuperview];
+            [hostWindow addSubview:self.buttonsContainer];
+            [hostWindow bringSubviewToFront:self.buttonsContainer];
+        }
     });
 }
 
@@ -472,21 +386,25 @@
 }
 
 - (void)showButtonsWithAnimation {
-    UIView *container = self.overlayWindow.buttonsContainer;
+    UIView *container = self.buttonsContainer;
     if (!container) {
         return;
     }
 
-    CGFloat screenH = self.overlayWindow.bounds.size.height;
-    CGFloat ratio = [self loadPositionRatio];
-    CGFloat targetCenterY = ratio * screenH;
-    CGFloat h = container.frame.size.height;
-    CGFloat safeY = MIN(MAX(targetCenterY - h / 2.0, 40), screenH - h - 40);
+    UIWindow *hostWindow = container.window ?: [self findHostKeyWindow];
+    if (hostWindow) {
+        [hostWindow bringSubviewToFront:container];
+        CGFloat screenH = hostWindow.bounds.size.height;
+        CGFloat ratio = [self loadPositionRatio];
+        CGFloat targetCenterY = ratio * screenH;
+        CGFloat h = container.frame.size.height;
+        CGFloat safeY = MIN(MAX(targetCenterY - h / 2.0, 40), screenH - h - 40);
 
-    CGRect f = container.frame;
-    f.origin.y = safeY;
-    f.origin.x = self.overlayWindow.bounds.size.width - f.size.width - 10;
-    container.frame = f;
+        CGRect f = container.frame;
+        f.origin.y = safeY;
+        f.origin.x = hostWindow.bounds.size.width - f.size.width - 10;
+        container.frame = f;
+    }
 
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
@@ -499,7 +417,7 @@
 }
 
 - (void)hideButtonsWithAnimation {
-    UIView *container = self.overlayWindow.buttonsContainer;
+    UIView *container = self.buttonsContainer;
     if (!container || container.hidden) {
         return;
     }
@@ -513,8 +431,11 @@
 }
 
 - (void)onPanContainer:(UIPanGestureRecognizer *)pan {
-    UIView *container = self.overlayWindow.buttonsContainer;
+    UIView *container = self.buttonsContainer;
     UIView *superView = container.superview;
+    if (!superView) {
+        return;
+    }
     CGPoint translation = [pan translationInView:superView];
     CGPoint center = container.center;
     center.y += translation.y;
@@ -565,18 +486,6 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
         method_exchangeImplementations(origMethod, swizzledMethod);
     }
 }
-
-@interface UIViewController (SnifferLifecycle)
-@end
-
-@implementation UIViewController (SnifferLifecycle)
-
-- (void)sniff_viewDidAppear:(BOOL)animated {
-    [self sniff_viewDidAppear:animated];
-    [[SnifferManager sharedManager] handleHostPageChanged:self];
-}
-
-@end
 
 @interface NSURL (SnifferProbe)
 @end
@@ -904,8 +813,6 @@ static void HookThirdPartyClassMethod(NSString *className, SEL origSel, SEL dumm
 }
 
 __attribute__((constructor)) static void SnifferInit(void) {
-    SwizzleMethod([UIViewController class], @selector(viewDidAppear:), @selector(sniff_viewDidAppear:));
-
     SwizzleClassMethod([NSURL class], @selector(URLWithString:), @selector(sniff_URLWithString:));
     SwizzleClassMethod([NSURL class], @selector(URLWithString:relativeToURL:), @selector(sniff_URLWithString:relativeToURL:));
     SwizzleMethod([NSURL class], @selector(initWithString:), @selector(sniff_initWithString:));
