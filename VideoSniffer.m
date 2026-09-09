@@ -27,7 +27,6 @@
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
 @property (nonatomic, strong) NSArray<UIButton *> *playerButtons;
 + (instancetype)sharedManager;
-+ (UIWindow *)hostKeyWindow;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
 - (void)clearMedia;
@@ -35,32 +34,21 @@
 - (void)handleHostPageChanged:(UIViewController *)vc;
 - (void)savePositionRatio:(CGFloat)ratio;
 - (CGFloat)loadPositionRatio;
-- (void)checkOrientationAndAdjustVisibility;
 @end
 
 @implementation SnifferRootViewController
-
 - (BOOL)shouldAutorotate {
     return NO;
 }
-
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
     return UIInterfaceOrientationMaskPortrait;
 }
-
 - (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation {
     return UIInterfaceOrientationPortrait;
 }
-
-- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
-    [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-    [[SnifferManager sharedManager] checkOrientationAndAdjustVisibility];
-}
-
 @end
 
 @implementation SnifferOverlayWindow
-
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     if (self.isSuspendedHidden || !self.buttonsContainer || self.buttonsContainer.hidden || self.buttonsContainer.alpha < 0.05) {
         return nil;
@@ -71,11 +59,9 @@
     }
     return nil;
 }
-
 @end
 
 @implementation SnifferScriptBridge
-
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
     if ([message.body isKindOfClass:[NSDictionary class]]) {
         NSString *url = message.body[@"url"];
@@ -86,7 +72,6 @@
         [[SnifferManager sharedManager] captureUrl:(NSString *)message.body];
     }
 }
-
 @end
 
 @implementation SnifferManager
@@ -99,32 +84,6 @@
         inst.scriptBridge = [[SnifferScriptBridge alloc] init];
     });
     return inst;
-}
-
-+ (UIWindow *)hostKeyWindow {
-    UIWindow *targetWindow = nil;
-    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *w in scene.windows) {
-                if (w != [SnifferManager sharedManager].overlayWindow && !w.hidden && w.isKeyWindow) {
-                    targetWindow = w;
-                    break;
-                }
-            }
-            if (!targetWindow) {
-                for (UIWindow *w in scene.windows) {
-                    if (w != [SnifferManager sharedManager].overlayWindow && !w.hidden) {
-                        targetWindow = w;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    if (!targetWindow) {
-        targetWindow = [UIApplication sharedApplication].windows.firstObject;
-    }
-    return targetWindow;
 }
 
 - (void)savePositionRatio:(CGFloat)ratio {
@@ -156,27 +115,23 @@
 - (void)onActive {
     [self setupFloatingUI];
     [self attachGlobalToggleGesture];
-    [self checkOrientationAndAdjustVisibility];
-}
-
-- (void)checkOrientationAndAdjustVisibility {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *mainWin = [SnifferManager hostKeyWindow];
-        CGSize screenSize = mainWin ? mainWin.bounds.size : [UIScreen mainScreen].bounds.size;
-        BOOL isLandscape = (screenSize.width > screenSize.height);
-
-        if (isLandscape) {
-            [self hideButtonsWithAnimation];
-        } else {
-            if (!self.overlayWindow.isSuspendedHidden && self.latestMediaUrl && self.latestMediaUrl.length > 0) {
-                [self showButtonsWithAnimation];
-            }
-        }
-    });
 }
 
 - (void)attachGlobalToggleGesture {
-    UIWindow *targetWindow = [SnifferManager hostKeyWindow];
+    UIWindow *targetWindow = nil;
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *w in scene.windows) {
+                if (w != self.overlayWindow && !w.hidden) {
+                    targetWindow = w;
+                    break;
+                }
+            }
+        }
+    }
+    if (!targetWindow) {
+        targetWindow = [UIApplication sharedApplication].windows.firstObject;
+    }
     if (!targetWindow || targetWindow == self.overlayWindow) {
         return;
     }
@@ -206,7 +161,9 @@
 
         if (self.overlayWindow.isSuspendedHidden) {
             self.overlayWindow.isSuspendedHidden = NO;
-            [self checkOrientationAndAdjustVisibility];
+            if (self.latestMediaUrl && self.latestMediaUrl.length > 0) {
+                [self showButtonsWithAnimation];
+            }
         } else {
             self.overlayWindow.isSuspendedHidden = YES;
             [self hideButtonsWithAnimation];
@@ -231,7 +188,6 @@
     }
     self.lastActiveVC = vc;
     [self attachGlobalToggleGesture];
-    [self checkOrientationAndAdjustVisibility];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -246,7 +202,8 @@
         @".vtt",
         @".key",
         @"segment",
-        @"chunk"
+        @"chunk",
+        @"fragment"
     ];
     for (NSString *key in segmentKeys) {
         if ([lower containsString:key]) {
@@ -258,7 +215,7 @@
 
 - (BOOL)isMediaUrl:(NSString *)urlStr {
     NSString *lower = [urlStr lowercaseString];
-    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf", @".json", @".html"];
+    NSArray *blackList = @[@".png", @".jpg", @".jpeg", @".gif", @".webp", @".css", @".js", @".svg", @".ico", @".woff", @".ttf"];
     for (NSString *b in blackList) {
         if ([lower containsString:b]) {
             return NO;
@@ -269,7 +226,7 @@
         return NO;
     }
 
-    NSArray *keys = @[@"m3u8", @"mp4", @"flv", @"mov", @"mkv", @"webm", @"mpd", @"f4v", @"avi", @"playlist", @"manifest", @"videoplayback", @"stream", @"playurl", @"play_url", @"video_url"];
+    NSArray *keys = @[@"m3u8", @"mp4", @"flv", @"mov", @"mkv", @"webm", @"mpd", @"f4v", @"avi", @"playlist", @"manifest", @"videoplayback", @"stream", @"video", @"live", @"vod", @"media", @"playurl", @"play_url", @"video_url"];
     for (NSString *key in keys) {
         if ([lower containsString:key]) {
             return YES;
@@ -312,18 +269,20 @@
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.latestMediaUrl && [self.latestMediaUrl isEqualToString:urlStr]) {
-            return;
-        }
-
+        BOOL urlChanged = ![self.latestMediaUrl isEqualToString:urlStr];
         self.latestMediaUrl = urlStr;
 
         if (!self.overlayWindow) {
             [self setupFloatingUI];
         }
 
-        [self checkOrientationAndAdjustVisibility];
-        [self rotateRefreshIcon];
+        if (!self.overlayWindow.isSuspendedHidden) {
+            [self showButtonsWithAnimation];
+        }
+
+        if (urlChanged) {
+            [self rotateRefreshIcon];
+        }
     });
 }
 
@@ -658,23 +617,6 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
 
 @end
 
-@interface NSURLSessionTask (SnifferLive)
-@end
-
-@implementation NSURLSessionTask (SnifferLive)
-
-- (void)sniff_resume {
-    if (self.originalRequest.URL.absoluteString) {
-        [[SnifferManager sharedManager] captureUrl:self.originalRequest.URL.absoluteString];
-    }
-    if (self.currentRequest.URL.absoluteString) {
-        [[SnifferManager sharedManager] captureUrl:self.currentRequest.URL.absoluteString];
-    }
-    [self sniff_resume];
-}
-
-@end
-
 @interface WKWebView (Sniffer)
 @end
 
@@ -702,7 +644,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                 }catch(e){}\
             }\
             check();\
-            setInterval(check,600);\
+            setInterval(check,800);\
             var origOpen=XMLHttpRequest.prototype.open;\
             XMLHttpRequest.prototype.open=function(m,u){\
                 postUrl(u);\
@@ -718,7 +660,7 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                     return origFetch.apply(this,arguments);\
                 };\
             }\
-            if(window.HTMLMediaElement){\
+            if(window.HTMLMediaElement&&HTMLMediaElement.prototype.play){\
                 var origPlay=HTMLMediaElement.prototype.play;\
                 HTMLMediaElement.prototype.play=function(){\
                     try{\
@@ -726,14 +668,6 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
                         if(this.currentSrc)postUrl(this.currentSrc);\
                     }catch(e){}\
                     return origPlay.apply(this,arguments);\
-                };\
-                var origLoad=HTMLMediaElement.prototype.load;\
-                HTMLMediaElement.prototype.load=function(){\
-                    try{\
-                        if(this.src)postUrl(this.src);\
-                        if(this.currentSrc)postUrl(this.currentSrc);\
-                    }catch(e){}\
-                    return origLoad.apply(this,arguments);\
                 };\
             }\
         })();";
@@ -976,12 +910,6 @@ __attribute__((constructor)) static void SnifferInit(void) {
     SwizzleClassMethod([NSURL class], @selector(URLWithString:relativeToURL:), @selector(sniff_URLWithString:relativeToURL:));
     SwizzleMethod([NSURL class], @selector(initWithString:), @selector(sniff_initWithString:));
     SwizzleMethod([NSURL class], @selector(initWithString:relativeToURL:), @selector(sniff_initWithString:relativeToURL:));
-
-    Class taskCls = NSClassFromString(@"__NSCFURLSessionTask");
-    if (taskCls) {
-        SwizzleMethod(taskCls, @selector(resume), @selector(sniff_resume));
-    }
-    SwizzleMethod([NSURLSessionTask class], @selector(resume), @selector(sniff_resume));
 
     SwizzleMethod([WKWebView class], @selector(initWithFrame:configuration:), @selector(sniff_initWithFrame:configuration:));
     SwizzleMethod([WKWebView class], @selector(loadRequest:), @selector(sniff_loadRequest:));
