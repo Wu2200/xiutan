@@ -212,9 +212,43 @@
 
 @end
 
+@interface SnifferPanelContainerView : UIView
+- (void)repositionInSuperview;
+@end
+
+@implementation SnifferPanelContainerView
+
+- (void)repositionInSuperview {
+    if (!self.superview) {
+        return;
+    }
+    CGFloat superW = self.superview.bounds.size.width;
+    CGFloat superH = self.superview.bounds.size.height;
+    CGFloat w = self.bounds.size.width;
+    CGFloat h = self.bounds.size.height;
+
+    double ratio = [[NSUserDefaults standardUserDefaults] doubleForKey:@"Sniffer_Buttons_PositionRatio_Y"];
+    if (ratio <= 0.05 || ratio >= 0.95) {
+        ratio = 0.45;
+    }
+
+    CGFloat safeY = MIN(MAX(ratio * superH - h / 2.0, 40), superH - h - 40);
+    CGRect f = self.frame;
+    f.origin.x = superW - w - 12;
+    f.origin.y = safeY;
+    self.frame = f;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self repositionInSuperview];
+}
+
+@end
+
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, copy) NSString *latestMediaUrl;
-@property (nonatomic, strong) UIView *buttonsContainer;
+@property (nonatomic, strong) SnifferPanelContainerView *buttonsContainer;
 @property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
@@ -322,38 +356,51 @@
     [self attachGlobalGestures];
 }
 
-- (UIWindow *)findHostKeyWindow {
-    UIWindow *targetWindow = nil;
+- (UIViewController *)topViewController {
+    UIViewController *top = nil;
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
             for (UIWindow *w in scene.windows) {
                 if (!w.hidden && w.alpha > 0.01 && w.isKeyWindow) {
-                    targetWindow = w;
+                    top = w.rootViewController;
                     break;
                 }
             }
-            if (!targetWindow) {
+            if (!top) {
                 for (UIWindow *w in scene.windows) {
                     if (!w.hidden && w.alpha > 0.01) {
-                        targetWindow = w;
+                        top = w.rootViewController;
                         break;
                     }
                 }
             }
         }
-        if (targetWindow) {
+        if (top) {
             break;
         }
     }
-    if (!targetWindow) {
-        targetWindow = [UIApplication sharedApplication].windows.firstObject;
+    if (!top) {
+        top = [UIApplication sharedApplication].windows.firstObject.rootViewController;
     }
-    return targetWindow;
+    while (top.presentedViewController) {
+        top = top.presentedViewController;
+    }
+    if ([top isKindOfClass:[UINavigationController class]]) {
+        top = ((UINavigationController *)top).visibleViewController;
+    }
+    if ([top isKindOfClass:[UITabBarController class]]) {
+        top = ((UITabBarController *)top).selectedViewController;
+        if ([top isKindOfClass:[UINavigationController class]]) {
+            top = ((UINavigationController *)top).visibleViewController;
+        }
+    }
+    return top;
 }
 
 - (void)attachGlobalGestures {
-    UIWindow *targetWindow = [self findHostKeyWindow];
-    if (!targetWindow) {
+    UIViewController *topVC = [self topViewController];
+    UIView *targetView = topVC.view;
+    if (!targetView) {
         return;
     }
 
@@ -365,9 +412,9 @@
         self.toggleGesture.cancelsTouchesInView = NO;
     }
 
-    if (self.toggleGesture.view != targetWindow) {
+    if (self.toggleGesture.view != targetView) {
         [self.toggleGesture.view removeGestureRecognizer:self.toggleGesture];
-        [targetWindow addGestureRecognizer:self.toggleGesture];
+        [targetView addGestureRecognizer:self.toggleGesture];
     }
 }
 
@@ -413,20 +460,21 @@
 }
 
 - (void)openDomainManagerCard {
-    UIWindow *window = [self findHostKeyWindow];
-    if (!window) {
+    UIViewController *topVC = [self topViewController];
+    UIView *targetView = topVC.view;
+    if (!targetView) {
         return;
     }
 
     if (!self.domainModalView) {
-        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:window.bounds];
+        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:targetView.bounds];
         __weak typeof(self) weakSelf = self;
         self.domainModalView.onSaveBlock = ^(NSString *text) {
             [weakSelf saveCustomDomains:text];
         };
     }
 
-    [self.domainModalView showInView:window initialText:[self loadCustomDomainsString]];
+    [self.domainModalView showInView:targetView initialText:[self loadCustomDomainsString]];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -560,8 +608,9 @@
 
 - (void)setupFloatingUI {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *hostWindow = [self findHostKeyWindow];
-        if (!hostWindow) {
+        UIViewController *topVC = [self topViewController];
+        UIView *targetView = topVC.view;
+        if (!targetView) {
             return;
         }
 
@@ -572,13 +621,7 @@
             CGFloat refreshD = 28;
             CGFloat totalH = btnH * 4 + spacing * 4 + refreshD;
 
-            CGFloat screenW = hostWindow.bounds.size.width;
-            CGFloat screenH = hostWindow.bounds.size.height;
-            CGFloat ratio = [self loadPositionRatio];
-            CGFloat targetCenterY = ratio * screenH;
-            CGFloat safeY = MIN(MAX(targetCenterY - totalH / 2.0, 40), screenH - totalH - 40);
-
-            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(screenW - btnW - 12, safeY, btnW, totalH)];
+            SnifferPanelContainerView *container = [[SnifferPanelContainerView alloc] initWithFrame:CGRectMake(targetView.bounds.size.width - btnW - 12, 100, btnW, totalH)];
             container.backgroundColor = [UIColor clearColor];
             container.hidden = YES;
             container.alpha = 0.0;
@@ -648,9 +691,12 @@
             self.buttonsContainer = container;
         }
 
-        if (self.buttonsContainer.superview == nil) {
-            [hostWindow addSubview:self.buttonsContainer];
+        if (self.buttonsContainer.superview != targetView) {
+            [self.buttonsContainer removeFromSuperview];
+            [targetView addSubview:self.buttonsContainer];
         }
+        [self.buttonsContainer repositionInSuperview];
+        [targetView bringSubviewToFront:self.buttonsContainer];
     });
 }
 
@@ -709,13 +755,24 @@
         return;
     }
 
+    UIViewController *topVC = [self topViewController];
+    if (topVC.view && container.superview != topVC.view) {
+        [container removeFromSuperview];
+        [topVC.view addSubview:container];
+    }
+
+    if (container.superview) {
+        [container.superview bringSubviewToFront:container];
+        [self.buttonsContainer repositionInSuperview];
+    }
+
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
-        [UIView animateWithDuration:0.25 animations:^{
+        [UIView animateWithDuration:0.3 delay:0.05 usingSpringWithDamping:0.8 initialSpringVelocity:0.6 options:0 animations:^{
             container.alpha = 1.0;
             container.transform = CGAffineTransformIdentity;
-        }];
+        } completion:nil];
     }
 }
 
@@ -724,7 +781,7 @@
     if (!container || container.hidden) {
         return;
     }
-    [UIView animateWithDuration:0.2 animations:^{
+    [UIView animateWithDuration:0.25 animations:^{
         container.alpha = 0.0;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
     } completion:^(BOOL finished) {
@@ -751,7 +808,7 @@
         CGFloat h = container.bounds.size.height;
         CGFloat safeY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
 
-        [UIView animateWithDuration:0.2 animations:^{
+        [UIView animateWithDuration:0.25 animations:^{
             container.center = CGPointMake(container.center.x, safeY);
         } completion:^(BOOL finished) {
             CGFloat ratio = safeY / screenH;
