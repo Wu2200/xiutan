@@ -231,7 +231,6 @@
 - (NSString *)loadCustomDomainsString;
 - (BOOL)isSuspendedHidden;
 - (void)saveSuspendedHidden:(BOOL)hidden;
-- (void)adaptContainerLayoutForSize:(CGSize)size;
 @end
 
 @implementation SnifferScriptBridge
@@ -554,8 +553,11 @@
             CGFloat spacing = 8;
             CGFloat refreshD = 28;
             CGFloat totalH = btnH * 4 + spacing * 3 + refreshD + 10;
+            CGFloat ratio = [self loadPositionRatio];
+            CGFloat targetCenterY = ratio * hostWindow.bounds.size.height;
+            CGFloat safeY = MIN(MAX(targetCenterY - totalH / 2.0, 40), hostWindow.bounds.size.height - totalH - 40);
 
-            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(hostWindow.bounds.size.width - btnW - 10, (hostWindow.bounds.size.height - totalH) / 2.0, btnW, totalH)];
+            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(hostWindow.bounds.size.width - btnW - 10, safeY, btnW, totalH)];
             container.backgroundColor = [UIColor clearColor];
             container.hidden = YES;
             container.alpha = 0.0;
@@ -625,11 +627,9 @@
             self.buttonsContainer = container;
         }
 
-        if (self.buttonsContainer.superview != hostWindow) {
-            [self.buttonsContainer removeFromSuperview];
+        if (self.buttonsContainer.superview == nil) {
             [hostWindow addSubview:self.buttonsContainer];
         }
-        [hostWindow bringSubviewToFront:self.buttonsContainer];
     });
 }
 
@@ -682,22 +682,6 @@
     }
 }
 
-- (void)adaptContainerLayoutForSize:(CGSize)size {
-    UIView *container = self.buttonsContainer;
-    if (!container) {
-        return;
-    }
-    CGFloat ratio = [self loadPositionRatio];
-    CGFloat targetCenterY = ratio * size.height;
-    CGFloat h = container.frame.size.height;
-    CGFloat safeY = MIN(MAX(targetCenterY - h / 2.0, 40), size.height - h - 40);
-
-    CGRect f = container.frame;
-    f.origin.y = safeY;
-    f.origin.x = size.width - f.size.width - 10;
-    container.frame = f;
-}
-
 - (void)showButtonsWithAnimation {
     UIView *container = self.buttonsContainer;
     if (!container) {
@@ -705,18 +689,17 @@
     }
 
     UIWindow *hostWindow = container.window ?: [self findHostKeyWindow];
-    if (hostWindow) {
+    if (hostWindow && container.superview == hostWindow) {
         [hostWindow bringSubviewToFront:container];
-        [self adaptContainerLayoutForSize:hostWindow.bounds.size];
     }
 
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
-        [UIView animateWithDuration:0.35 delay:0.05 usingSpringWithDamping:0.75 initialSpringVelocity:0.6 options:0 animations:^{
+        [UIView animateWithDuration:0.25 animations:^{
             container.alpha = 1.0;
             container.transform = CGAffineTransformIdentity;
-        } completion:nil];
+        }];
     }
 }
 
@@ -725,7 +708,7 @@
     if (!container || container.hidden) {
         return;
     }
-    [UIView animateWithDuration:0.25 animations:^{
+    [UIView animateWithDuration:0.2 animations:^{
         container.alpha = 0.0;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
     } completion:^(BOOL finished) {
@@ -790,20 +773,6 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL swizzledSel) {
         method_exchangeImplementations(origMethod, swizzledMethod);
     }
 }
-
-@interface UIViewController (SnifferRotateHook)
-@end
-
-@implementation UIViewController (SnifferRotateHook)
-
-- (void)sniff_viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator {
-    [self sniff_viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
-    [coordinator animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
-        [[SnifferManager sharedManager] adaptContainerLayoutForSize:size];
-    }];
-}
-
-@end
 
 @interface NSURL (SnifferProbe)
 @end
@@ -1131,8 +1100,6 @@ static void HookThirdPartyClassMethod(NSString *className, SEL origSel, SEL dumm
 }
 
 __attribute__((constructor)) static void SnifferInit(void) {
-    SwizzleMethod([UIViewController class], @selector(viewWillTransitionToSize:withTransitionCoordinator:), @selector(sniff_viewWillTransitionToSize:withTransitionCoordinator:));
-
     SwizzleClassMethod([NSURL class], @selector(URLWithString:), @selector(sniff_URLWithString:));
     SwizzleClassMethod([NSURL class], @selector(URLWithString:relativeToURL:), @selector(sniff_URLWithString:relativeToURL:));
     SwizzleMethod([NSURL class], @selector(initWithString:), @selector(sniff_initWithString:));
