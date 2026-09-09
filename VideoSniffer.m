@@ -220,8 +220,6 @@
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
 @property (nonatomic, copy) NSArray<NSString *> *customDomains;
 @property (nonatomic, strong) SnifferDomainModalView *domainModalView;
-@property (nonatomic, weak) UIView *lastTargetPlayerView;
-@property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
@@ -233,6 +231,7 @@
 - (NSString *)loadCustomDomainsString;
 - (BOOL)isSuspendedHidden;
 - (void)saveSuspendedHidden:(BOOL)hidden;
+- (void)updateContainerLayoutRightNow;
 @end
 
 @implementation SnifferScriptBridge
@@ -314,83 +313,48 @@
 - (void)registerNotifications {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIApplicationDidBecomeActiveNotification object:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
+        [self setupFloatingUI];
         [self attachGlobalGestures];
     });
 }
 
 - (void)onActive {
+    [self setupFloatingUI];
     [self attachGlobalGestures];
 }
 
-- (UIView *)findActivePlayerView {
-    UIWindow *keyWin = nil;
+- (UIWindow *)findHostKeyWindow {
+    UIWindow *targetWindow = nil;
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
             for (UIWindow *w in scene.windows) {
                 if (w.isKeyWindow && !w.hidden && w.alpha > 0.01) {
-                    keyWin = w;
+                    targetWindow = w;
                     break;
                 }
             }
-        }
-    }
-    if (!keyWin) {
-        keyWin = [UIApplication sharedApplication].windows.firstObject;
-    }
-    if (!keyWin) {
-        return nil;
-    }
-
-    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:keyWin];
-    UIView *bestPlayerView = nil;
-    CGFloat maxArea = 0;
-
-    while (queue.count > 0) {
-        UIView *v = queue.firstObject;
-        [queue removeObjectAtIndex:0];
-
-        if (v.hidden || v.alpha < 0.01) {
-            continue;
-        }
-
-        NSString *clsName = NSStringFromClass([v class]);
-        BOOL isCandidate = [clsName containsString:@"Player"] || [clsName containsString:@"Video"] || [clsName containsString:@"Media"] || [v.layer isKindOfClass:[AVPlayerLayer class]];
-        if (!isCandidate) {
-            for (CALayer *sublayer in v.layer.sublayers) {
-                if ([sublayer isKindOfClass:[AVPlayerLayer class]]) {
-                    isCandidate = YES;
-                    break;
+            if (!targetWindow) {
+                for (UIWindow *w in scene.windows) {
+                    if (!w.hidden && w.alpha > 0.01) {
+                        targetWindow = w;
+                        break;
+                    }
                 }
             }
         }
-
-        if (isCandidate) {
-            CGFloat area = v.bounds.size.width * v.bounds.size.height;
-            if (area > maxArea && area > 20000) {
-                maxArea = area;
-                bestPlayerView = v;
-            }
-        }
-
-        for (UIView *sub in v.subviews) {
-            [queue addObject:sub];
+        if (targetWindow) {
+            break;
         }
     }
-
-    if (bestPlayerView) {
-        return bestPlayerView;
+    if (!targetWindow) {
+        targetWindow = [UIApplication sharedApplication].windows.firstObject;
     }
-
-    UIViewController *topVC = keyWin.rootViewController;
-    while (topVC.presentedViewController) {
-        topVC = topVC.presentedViewController;
-    }
-    return topVC.view ?: keyWin;
+    return targetWindow;
 }
 
 - (void)attachGlobalGestures {
-    UIView *target = [self findActivePlayerView];
-    if (!target) {
+    UIWindow *targetWindow = [self findHostKeyWindow];
+    if (!targetWindow) {
         return;
     }
 
@@ -402,9 +366,9 @@
         self.toggleGesture.cancelsTouchesInView = NO;
     }
 
-    if (self.toggleGesture.view != target) {
+    if (self.toggleGesture.view != targetWindow) {
         [self.toggleGesture.view removeGestureRecognizer:self.toggleGesture];
-        [target addGestureRecognizer:self.toggleGesture];
+        [targetWindow addGestureRecognizer:self.toggleGesture];
     }
 }
 
@@ -450,20 +414,20 @@
 }
 
 - (void)openDomainManagerCard {
-    UIView *parent = [self findActivePlayerView];
-    if (!parent) {
+    UIWindow *window = [self findHostKeyWindow];
+    if (!window) {
         return;
     }
 
     if (!self.domainModalView) {
-        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:parent.bounds];
+        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:window.bounds];
         __weak typeof(self) weakSelf = self;
         self.domainModalView.onSaveBlock = ^(NSString *text) {
             [weakSelf saveCustomDomains:text];
         };
     }
 
-    [self.domainModalView showInView:parent initialText:[self loadCustomDomainsString]];
+    [self.domainModalView showInView:window initialText:[self loadCustomDomainsString]];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -593,9 +557,37 @@
     [self hideButtonsWithAnimation];
 }
 
+- (void)updateContainerLayoutRightNow {
+    UIWindow *hostWindow = [self findHostKeyWindow];
+    if (!hostWindow || !self.buttonsContainer) {
+        return;
+    }
+
+    self.buttonsContainer.transform = CGAffineTransformIdentity;
+
+    CGFloat winW = hostWindow.bounds.size.width;
+    CGFloat winH = hostWindow.bounds.size.height;
+    CGFloat btnW = 82;
+    CGFloat totalH = self.buttonsContainer.bounds.size.height;
+
+    CGFloat rightInset = 12;
+    if (winW > winH) {
+        rightInset = 44;
+    }
+    if (@available(iOS 11.0, *)) {
+        if (hostWindow.safeAreaInsets.right > 0) {
+            rightInset = MAX(hostWindow.safeAreaInsets.right + 8, rightInset);
+        }
+    }
+
+    CGFloat ratio = [self loadPositionRatio];
+    CGFloat safeY = MIN(MAX(ratio * winH - totalH / 2.0, 30), winH - totalH - 30);
+    self.buttonsContainer.frame = CGRectMake(winW - btnW - rightInset, safeY, btnW, totalH);
+}
+
 - (void)setupFloatingUI {
-    UIView *playerView = [self findActivePlayerView];
-    if (!playerView) {
+    UIWindow *hostWindow = [self findHostKeyWindow];
+    if (!hostWindow) {
         return;
     }
 
@@ -676,19 +668,13 @@
         self.buttonsContainer = container;
     }
 
-    if (self.buttonsContainer.superview != playerView) {
+    if (self.buttonsContainer.superview != hostWindow) {
         [self.buttonsContainer removeFromSuperview];
-        [playerView addSubview:self.buttonsContainer];
+        [hostWindow addSubview:self.buttonsContainer];
     }
 
-    CGFloat ratio = [self loadPositionRatio];
-    CGFloat pW = playerView.bounds.size.width;
-    CGFloat pH = playerView.bounds.size.height;
-    CGFloat safeY = MIN(MAX(ratio * pH - totalH / 2.0, 20), pH - totalH - 20);
-
-    CGRect f = CGRectMake(pW - btnW - 14, safeY, btnW, totalH);
-    self.buttonsContainer.frame = f;
-    [playerView bringSubviewToFront:self.buttonsContainer];
+    [self updateContainerLayoutRightNow];
+    [hostWindow bringSubviewToFront:self.buttonsContainer];
 }
 
 - (void)btnTouchDown:(UIButton *)btn {
@@ -746,14 +732,15 @@
         return;
     }
 
-    UIView *playerView = [self findActivePlayerView];
-    if (playerView && container.superview != playerView) {
+    UIWindow *hostWindow = [self findHostKeyWindow];
+    if (hostWindow && container.superview != hostWindow) {
         [container removeFromSuperview];
-        [playerView addSubview:container];
+        [hostWindow addSubview:container];
     }
 
-    if (container.superview) {
-        [container.superview bringSubviewToFront:container];
+    [self updateContainerLayoutRightNow];
+    if (hostWindow) {
+        [hostWindow bringSubviewToFront:container];
     }
 
     if (container.hidden || container.alpha < 0.05) {
@@ -796,10 +783,10 @@
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
         CGFloat screenH = superView.bounds.size.height;
         CGFloat h = container.bounds.size.height;
-        CGFloat safeY = MIN(MAX(center.y, 20 + h / 2.0), screenH - 20 - h / 2.0);
+        CGFloat safeY = MIN(MAX(center.y, 30 + h / 2.0), screenH - 30 - h / 2.0);
 
         [UIView animateWithDuration:0.2 animations:^{
-            container.center = CGPointMake(center.x, safeY);
+            container.center = CGPointMake(container.center.x, safeY);
         } completion:^(BOOL finished) {
             CGFloat ratio = safeY / screenH;
             [self savePositionRatio:ratio];
