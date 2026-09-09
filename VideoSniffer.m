@@ -215,11 +215,13 @@
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, copy) NSString *latestMediaUrl;
 @property (nonatomic, strong) UIView *buttonsContainer;
+@property (nonatomic, strong) UIStackView *buttonsStackView;
 @property (nonatomic, strong) UIButton *refreshButton;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
 @property (nonatomic, copy) NSArray<NSString *> *customDomains;
 @property (nonatomic, strong) SnifferDomainModalView *domainModalView;
+@property (nonatomic, strong) NSLayoutConstraint *topConstraint;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
@@ -304,7 +306,7 @@
 - (CGFloat)loadPositionRatio {
     double ratio = [[NSUserDefaults standardUserDefaults] doubleForKey:@"Sniffer_Buttons_PositionRatio_Y"];
     if (ratio <= 0.05 || ratio >= 0.95) {
-        return 0.5;
+        return 0.45;
     }
     return (CGFloat)ratio;
 }
@@ -548,16 +550,8 @@
         }
 
         if (!self.buttonsContainer) {
-            CGFloat btnW = 82;
-            CGFloat btnH = 34;
-            CGFloat spacing = 8;
-            CGFloat refreshD = 28;
-            CGFloat totalH = btnH * 4 + spacing * 3 + refreshD + 10;
-            CGFloat ratio = [self loadPositionRatio];
-            CGFloat targetCenterY = ratio * hostWindow.bounds.size.height;
-            CGFloat safeY = MIN(MAX(targetCenterY - totalH / 2.0, 40), hostWindow.bounds.size.height - totalH - 40);
-
-            UIView *container = [[UIView alloc] initWithFrame:CGRectMake(hostWindow.bounds.size.width - btnW - 10, safeY, btnW, totalH)];
+            UIView *container = [[UIView alloc] init];
+            container.translatesAutoresizingMaskIntoConstraints = NO;
             container.backgroundColor = [UIColor clearColor];
             container.hidden = YES;
             container.alpha = 0.0;
@@ -566,11 +560,18 @@
             pan.delegate = self;
             [container addGestureRecognizer:pan];
 
+            UIStackView *stack = [[UIStackView alloc] init];
+            stack.translatesAutoresizingMaskIntoConstraints = NO;
+            stack.axis = UILayoutConstraintAxisVertical;
+            stack.alignment = UIStackViewAlignmentCenter;
+            stack.spacing = 8;
+            [container addSubview:stack];
+
             NSArray *titles = @[@"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
             for (NSInteger i = 0; i < titles.count; i++) {
                 NSString *title = titles[i];
                 UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-                btn.frame = CGRectMake(0, i * (btnH + spacing), btnW, btnH);
+                btn.translatesAutoresizingMaskIntoConstraints = NO;
                 btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
                 btn.layer.cornerRadius = 10;
                 btn.layer.masksToBounds = NO;
@@ -597,13 +598,18 @@
                 [btn addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
                 [btn addTarget:self action:@selector(playerBtnTap:) forControlEvents:UIControlEventTouchUpInside];
 
-                [container addSubview:btn];
+                [stack addArrangedSubview:btn];
+
+                [NSLayoutConstraint activateConstraints:@[
+                    [btn.widthAnchor constraintEqualToConstant:82],
+                    [btn.heightAnchor constraintEqualToConstant:34]
+                ]];
             }
 
             UIButton *refreshButton = [UIButton buttonWithType:UIButtonTypeCustom];
-            refreshButton.frame = CGRectMake((btnW - refreshD) / 2.0, btnH * 4 + spacing * 3 + 8, refreshD, refreshD);
+            refreshButton.translatesAutoresizingMaskIntoConstraints = NO;
             refreshButton.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
-            refreshButton.layer.cornerRadius = refreshD / 2.0;
+            refreshButton.layer.cornerRadius = 14;
             refreshButton.layer.masksToBounds = NO;
             refreshButton.layer.borderWidth = 0.5;
             refreshButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
@@ -622,14 +628,38 @@
             refreshLongPress.minimumPressDuration = 0.8;
             [refreshButton addGestureRecognizer:refreshLongPress];
 
-            [container addSubview:refreshButton];
+            [stack addArrangedSubview:refreshButton];
+
+            [NSLayoutConstraint activateConstraints:@[
+                [refreshButton.widthAnchor constraintEqualToConstant:28],
+                [refreshButton.heightAnchor constraintEqualToConstant:28],
+
+                [stack.topAnchor constraintEqualToAnchor:container.topAnchor],
+                [stack.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],
+                [stack.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+                [stack.trailingAnchor constraintEqualToAnchor:container.trailingAnchor]
+            ]];
+
             self.refreshButton = refreshButton;
+            self.buttonsStackView = stack;
             self.buttonsContainer = container;
         }
 
-        if (self.buttonsContainer.superview == nil) {
+        if (self.buttonsContainer.superview != hostWindow) {
+            [self.buttonsContainer removeFromSuperview];
             [hostWindow addSubview:self.buttonsContainer];
+
+            CGFloat ratio = [self loadPositionRatio];
+            CGFloat targetY = ratio * hostWindow.bounds.size.height;
+
+            self.topConstraint = [self.buttonsContainer.topAnchor constraintEqualToAnchor:hostWindow.topAnchor constant:targetY];
+
+            [NSLayoutConstraint activateConstraints:@[
+                [self.buttonsContainer.trailingAnchor constraintEqualToAnchor:hostWindow.safeAreaLayoutGuide.trailingAnchor constant:-12],
+                self.topConstraint
+            ]];
         }
+        [hostWindow bringSubviewToFront:self.buttonsContainer];
     });
 }
 
@@ -689,17 +719,17 @@
     }
 
     UIWindow *hostWindow = container.window ?: [self findHostKeyWindow];
-    if (hostWindow && container.superview == hostWindow) {
+    if (hostWindow) {
         [hostWindow bringSubviewToFront:container];
     }
 
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
-        [UIView animateWithDuration:0.25 animations:^{
+        [UIView animateWithDuration:0.3 delay:0.05 usingSpringWithDamping:0.8 initialSpringVelocity:0.6 options:0 animations:^{
             container.alpha = 1.0;
             container.transform = CGAffineTransformIdentity;
-        }];
+        } completion:nil];
     }
 }
 
@@ -708,7 +738,7 @@
     if (!container || container.hidden) {
         return;
     }
-    [UIView animateWithDuration:0.2 animations:^{
+    [UIView animateWithDuration:0.25 animations:^{
         container.alpha = 0.0;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
     } completion:^(BOOL finished) {
@@ -720,26 +750,22 @@
 - (void)onPanContainer:(UIPanGestureRecognizer *)pan {
     UIView *container = self.buttonsContainer;
     UIView *superView = container.superview;
-    if (!superView) {
+    if (!superView || !self.topConstraint) {
         return;
     }
+
     CGPoint translation = [pan translationInView:superView];
-    CGPoint center = container.center;
-    center.y += translation.y;
-    container.center = center;
+    CGFloat newConstant = self.topConstraint.constant + translation.y;
+    CGFloat screenH = superView.bounds.size.height;
+    CGFloat h = container.bounds.size.height;
+    CGFloat safeY = MIN(MAX(newConstant, 40), screenH - h - 40);
+
+    self.topConstraint.constant = safeY;
     [pan setTranslation:CGPointMake(0.0, 0.0) inView:superView];
 
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        CGFloat screenH = superView.bounds.size.height;
-        CGFloat h = container.frame.size.height;
-        CGFloat targetY = MIN(MAX(center.y, 40 + h / 2.0), screenH - 40 - h / 2.0);
-
-        [UIView animateWithDuration:0.25 animations:^{
-            container.center = CGPointMake(container.center.x, targetY);
-        } completion:^(BOOL finished) {
-            CGFloat ratio = targetY / screenH;
-            [self savePositionRatio:ratio];
-        }];
+        CGFloat ratio = safeY / screenH;
+        [self savePositionRatio:ratio];
     }
 }
 
