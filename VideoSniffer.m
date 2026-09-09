@@ -220,7 +220,6 @@
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
 @property (nonatomic, copy) NSArray<NSString *> *customDomains;
 @property (nonatomic, strong) SnifferDomainModalView *domainModalView;
-@property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
@@ -230,6 +229,8 @@
 - (CGFloat)loadPositionRatio;
 - (void)saveCustomDomains:(NSString *)rawString;
 - (NSString *)loadCustomDomainsString;
+- (BOOL)isSuspendedHidden;
+- (void)saveSuspendedHidden:(BOOL)hidden;
 @end
 
 @implementation SnifferScriptBridge
@@ -257,6 +258,15 @@
         [inst reloadCustomDomains];
     });
     return inst;
+}
+
+- (BOOL)isSuspendedHidden {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"Sniffer_User_SuspendedHidden"];
+}
+
+- (void)saveSuspendedHidden:(BOOL)hidden {
+    [[NSUserDefaults standardUserDefaults] setBool:hidden forKey:@"Sniffer_User_SuspendedHidden"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
 - (void)reloadCustomDomains {
@@ -381,14 +391,16 @@
         UINotificationFeedbackGenerator *feedback = [[UINotificationFeedbackGenerator alloc] init];
         [feedback notificationOccurred:UINotificationFeedbackTypeSuccess];
 
-        if (self.isSuspendedHidden) {
-            self.isSuspendedHidden = NO;
+        BOOL currentHidden = [self isSuspendedHidden];
+        BOOL targetHidden = !currentHidden;
+        [self saveSuspendedHidden:targetHidden];
+
+        if (targetHidden) {
+            [self hideButtonsWithAnimation];
+        } else {
             if (self.latestMediaUrl && self.latestMediaUrl.length > 0) {
                 [self showButtonsWithAnimation];
             }
-        } else {
-            self.isSuspendedHidden = YES;
-            [self hideButtonsWithAnimation];
         }
     }
 }
@@ -514,7 +526,7 @@
             [self setupFloatingUI];
         }
 
-        if (!self.isSuspendedHidden) {
+        if (![self isSuspendedHidden]) {
             [self showButtonsWithAnimation];
         }
 
