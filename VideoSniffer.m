@@ -212,67 +212,16 @@
 
 @end
 
-@interface SnifferPassthroughViewController : UIViewController
-@end
-
-@implementation SnifferPassthroughViewController
-
-- (BOOL)shouldAutorotate {
-    UIViewController *hostRoot = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    if (hostRoot && hostRoot != self) {
-        return [hostRoot shouldAutorotate];
-    }
-    return YES;
-}
-
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    UIViewController *hostRoot = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    if (hostRoot && hostRoot != self) {
-        return [hostRoot supportedInterfaceOrientations];
-    }
-    return UIInterfaceOrientationMaskAll;
-}
-
-- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation {
-    UIViewController *hostRoot = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    if (hostRoot && hostRoot != self) {
-        return [hostRoot preferredInterfaceOrientationForPresentation];
-    }
-    return UIInterfaceOrientationPortrait;
-}
-
-@end
-
-@interface SnifferPassthroughWindow : UIWindow
-@property (nonatomic, strong) UIView *buttonsContainer;
-@property (nonatomic, assign) BOOL isSuspendedHidden;
-@end
-
-@implementation SnifferPassthroughWindow
-
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.isSuspendedHidden || !self.buttonsContainer || self.buttonsContainer.hidden || self.buttonsContainer.alpha < 0.05) {
-        return nil;
-    }
-    CGPoint p = [self convertPoint:point toView:self.buttonsContainer];
-    if ([self.buttonsContainer pointInside:p withEvent:event]) {
-        return [super hitTest:point withEvent:event];
-    }
-    return nil;
-}
-
-@end
-
 @interface SnifferManager : NSObject <UIGestureRecognizerDelegate>
 @property (nonatomic, copy) NSString *latestMediaUrl;
-@property (nonatomic, strong) SnifferPassthroughWindow *overlayWindow;
 @property (nonatomic, strong) UIView *buttonsContainer;
 @property (nonatomic, strong) UIButton *refreshButton;
-@property (nonatomic, strong) NSLayoutConstraint *centerYConstraint;
 @property (nonatomic, strong) SnifferScriptBridge *scriptBridge;
 @property (nonatomic, strong) UILongPressGestureRecognizer *toggleGesture;
 @property (nonatomic, copy) NSArray<NSString *> *customDomains;
 @property (nonatomic, strong) SnifferDomainModalView *domainModalView;
+@property (nonatomic, weak) UIView *lastTargetPlayerView;
+@property (nonatomic, assign) BOOL isSuspendedHidden;
 + (instancetype)sharedManager;
 - (void)captureUrl:(NSString *)urlStr;
 - (void)setupFloatingUI;
@@ -365,48 +314,83 @@
 - (void)registerNotifications {
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onActive) name:UIApplicationDidBecomeActiveNotification object:nil];
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self setupFloatingUI];
         [self attachGlobalGestures];
     });
 }
 
 - (void)onActive {
-    [self setupFloatingUI];
     [self attachGlobalGestures];
 }
 
-- (UIWindow *)findHostKeyWindow {
-    UIWindow *targetWindow = nil;
+- (UIView *)findActivePlayerView {
+    UIWindow *keyWin = nil;
     for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
             for (UIWindow *w in scene.windows) {
-                if (w != self.overlayWindow && !w.hidden && w.alpha > 0.01 && w.isKeyWindow) {
-                    targetWindow = w;
+                if (w.isKeyWindow && !w.hidden && w.alpha > 0.01) {
+                    keyWin = w;
                     break;
                 }
             }
-            if (!targetWindow) {
-                for (UIWindow *w in scene.windows) {
-                    if (w != self.overlayWindow && !w.hidden && w.alpha > 0.01) {
-                        targetWindow = w;
-                        break;
-                    }
+        }
+    }
+    if (!keyWin) {
+        keyWin = [UIApplication sharedApplication].windows.firstObject;
+    }
+    if (!keyWin) {
+        return nil;
+    }
+
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:keyWin];
+    UIView *bestPlayerView = nil;
+    CGFloat maxArea = 0;
+
+    while (queue.count > 0) {
+        UIView *v = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+
+        if (v.hidden || v.alpha < 0.01) {
+            continue;
+        }
+
+        NSString *clsName = NSStringFromClass([v class]);
+        BOOL isCandidate = [clsName containsString:@"Player"] || [clsName containsString:@"Video"] || [clsName containsString:@"Media"] || [v.layer isKindOfClass:[AVPlayerLayer class]];
+        if (!isCandidate) {
+            for (CALayer *sublayer in v.layer.sublayers) {
+                if ([sublayer isKindOfClass:[AVPlayerLayer class]]) {
+                    isCandidate = YES;
+                    break;
                 }
             }
         }
-        if (targetWindow) {
-            break;
+
+        if (isCandidate) {
+            CGFloat area = v.bounds.size.width * v.bounds.size.height;
+            if (area > maxArea && area > 20000) {
+                maxArea = area;
+                bestPlayerView = v;
+            }
+        }
+
+        for (UIView *sub in v.subviews) {
+            [queue addObject:sub];
         }
     }
-    if (!targetWindow) {
-        targetWindow = [UIApplication sharedApplication].windows.firstObject;
+
+    if (bestPlayerView) {
+        return bestPlayerView;
     }
-    return targetWindow;
+
+    UIViewController *topVC = keyWin.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
+    }
+    return topVC.view ?: keyWin;
 }
 
 - (void)attachGlobalGestures {
-    UIWindow *targetWindow = [self findHostKeyWindow];
-    if (!targetWindow) {
+    UIView *target = [self findActivePlayerView];
+    if (!target) {
         return;
     }
 
@@ -418,9 +402,9 @@
         self.toggleGesture.cancelsTouchesInView = NO;
     }
 
-    if (self.toggleGesture.view != targetWindow) {
+    if (self.toggleGesture.view != target) {
         [self.toggleGesture.view removeGestureRecognizer:self.toggleGesture];
-        [targetWindow addGestureRecognizer:self.toggleGesture];
+        [target addGestureRecognizer:self.toggleGesture];
     }
 }
 
@@ -447,10 +431,6 @@
         BOOL targetHidden = !currentHidden;
         [self saveSuspendedHidden:targetHidden];
 
-        if (self.overlayWindow) {
-            self.overlayWindow.isSuspendedHidden = targetHidden;
-        }
-
         if (targetHidden) {
             [self hideButtonsWithAnimation];
         } else {
@@ -470,20 +450,20 @@
 }
 
 - (void)openDomainManagerCard {
-    UIWindow *window = self.overlayWindow ?: [self findHostKeyWindow];
-    if (!window) {
+    UIView *parent = [self findActivePlayerView];
+    if (!parent) {
         return;
     }
 
     if (!self.domainModalView) {
-        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:window.bounds];
+        self.domainModalView = [[SnifferDomainModalView alloc] initWithFrame:parent.bounds];
         __weak typeof(self) weakSelf = self;
         self.domainModalView.onSaveBlock = ^(NSString *text) {
             [weakSelf saveCustomDomains:text];
         };
     }
 
-    [self.domainModalView showInView:window initialText:[self loadCustomDomainsString]];
+    [self.domainModalView showInView:parent initialText:[self loadCustomDomainsString]];
 }
 
 - (BOOL)isMediaSegmentUrl:(NSString *)urlStr {
@@ -596,9 +576,7 @@
         BOOL urlChanged = ![self.latestMediaUrl isEqualToString:urlStr];
         self.latestMediaUrl = urlStr;
 
-        if (!self.overlayWindow) {
-            [self setupFloatingUI];
-        }
+        [self setupFloatingUI];
 
         if (![self isSuspendedHidden]) {
             [self showButtonsWithAnimation];
@@ -616,141 +594,101 @@
 }
 
 - (void)setupFloatingUI {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *hostWindow = [self findHostKeyWindow];
-        if (!hostWindow) {
-            return;
-        }
+    UIView *playerView = [self findActivePlayerView];
+    if (!playerView) {
+        return;
+    }
 
-        if (!self.overlayWindow) {
-            UIWindowScene *scene = hostWindow.windowScene;
-            if (scene) {
-                self.overlayWindow = [[SnifferPassthroughWindow alloc] initWithWindowScene:scene];
-            } else {
-                self.overlayWindow = [[SnifferPassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-            }
-            self.overlayWindow.backgroundColor = [UIColor clearColor];
-            self.overlayWindow.windowLevel = UIWindowLevelStatusBar - 1;
-            self.overlayWindow.isSuspendedHidden = [self isSuspendedHidden];
+    CGFloat btnW = 82;
+    CGFloat btnH = 34;
+    CGFloat spacing = 8;
+    CGFloat refreshD = 28;
+    CGFloat totalH = btnH * 4 + spacing * 4 + refreshD;
 
-            SnifferPassthroughViewController *rootVC = [[SnifferPassthroughViewController alloc] init];
-            rootVC.view.backgroundColor = [UIColor clearColor];
-            self.overlayWindow.rootViewController = rootVC;
+    if (!self.buttonsContainer) {
+        UIView *container = [[UIView alloc] initWithFrame:CGRectMake(0, 0, btnW, totalH)];
+        container.backgroundColor = [UIColor clearColor];
+        container.hidden = YES;
+        container.alpha = 0.0;
 
-            CGFloat btnW = 82;
-            CGFloat btnH = 34;
-            CGFloat spacing = 8;
-            CGFloat refreshD = 28;
-            CGFloat totalH = btnH * 4 + spacing * 4 + refreshD;
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanContainer:)];
+        pan.delegate = self;
+        [container addGestureRecognizer:pan];
 
-            UIView *container = [[UIView alloc] init];
-            container.translatesAutoresizingMaskIntoConstraints = NO;
-            container.backgroundColor = [UIColor clearColor];
-            container.hidden = YES;
-            container.alpha = 0.0;
+        NSArray *titles = @[@"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
+        for (NSInteger i = 0; i < titles.count; i++) {
+            NSString *title = titles[i];
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+            btn.frame = CGRectMake(0, i * (btnH + spacing), btnW, btnH);
+            btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
+            btn.layer.cornerRadius = 10;
+            btn.layer.masksToBounds = NO;
+            btn.layer.borderWidth = 0.5;
+            btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
+            btn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.15].CGColor;
+            btn.layer.shadowOffset = CGSizeMake(0, 2);
+            btn.layer.shadowRadius = 4;
+            btn.layer.shadowOpacity = 1.0;
+            btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+            [btn setTitle:title forState:UIControlStateNormal];
 
-            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPanContainer:)];
-            pan.delegate = self;
-            [container addGestureRecognizer:pan];
-
-            UIStackView *stack = [[UIStackView alloc] init];
-            stack.translatesAutoresizingMaskIntoConstraints = NO;
-            stack.axis = UILayoutConstraintAxisVertical;
-            stack.alignment = UIStackViewAlignmentCenter;
-            stack.spacing = spacing;
-            [container addSubview:stack];
-
-            NSArray *titles = @[@"Forward", @"Fileball", @"Infuse", @"SenPlayer"];
-            for (NSInteger i = 0; i < titles.count; i++) {
-                NSString *title = titles[i];
-                UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-                btn.translatesAutoresizingMaskIntoConstraints = NO;
-                btn.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
-                btn.layer.cornerRadius = 10;
-                btn.layer.masksToBounds = NO;
-                btn.layer.borderWidth = 0.5;
-                btn.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
-                btn.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.15].CGColor;
-                btn.layer.shadowOffset = CGSizeMake(0, 2);
-                btn.layer.shadowRadius = 4;
-                btn.layer.shadowOpacity = 1.0;
-                btn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
-                [btn setTitle:title forState:UIControlStateNormal];
-
-                if ([title isEqualToString:@"Forward"]) {
-                    [btn setTitleColor:[UIColor colorWithRed:0.05 green:0.45 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
-                } else if ([title isEqualToString:@"Fileball"]) {
-                    [btn setTitleColor:[UIColor colorWithRed:0.15 green:0.52 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
-                } else if ([title isEqualToString:@"Infuse"]) {
-                    [btn setTitleColor:[UIColor colorWithRed:0.5 green:0.18 blue:0.62 alpha:1.0] forState:UIControlStateNormal];
-                } else if ([title isEqualToString:@"SenPlayer"]) {
-                    [btn setTitleColor:[UIColor colorWithRed:0.28 green:0.35 blue:0.78 alpha:1.0] forState:UIControlStateNormal];
-                }
-
-                [btn addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
-                [btn addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
-                [btn addTarget:self action:@selector(playerBtnTap:) forControlEvents:UIControlEventTouchUpInside];
-
-                [stack addArrangedSubview:btn];
-
-                [NSLayoutConstraint activateConstraints:@[
-                    [btn.widthAnchor constraintEqualToConstant:btnW],
-                    [btn.heightAnchor constraintEqualToConstant:btnH]
-                ]];
+            if ([title isEqualToString:@"Forward"]) {
+                [btn setTitleColor:[UIColor colorWithRed:0.05 green:0.45 blue:0.75 alpha:1.0] forState:UIControlStateNormal];
+            } else if ([title isEqualToString:@"Fileball"]) {
+                [btn setTitleColor:[UIColor colorWithRed:0.15 green:0.52 blue:0.2 alpha:1.0] forState:UIControlStateNormal];
+            } else if ([title isEqualToString:@"Infuse"]) {
+                [btn setTitleColor:[UIColor colorWithRed:0.5 green:0.18 blue:0.62 alpha:1.0] forState:UIControlStateNormal];
+            } else if ([title isEqualToString:@"SenPlayer"]) {
+                [btn setTitleColor:[UIColor colorWithRed:0.28 green:0.35 blue:0.78 alpha:1.0] forState:UIControlStateNormal];
             }
 
-            UIButton *refreshButton = [UIButton buttonWithType:UIButtonTypeCustom];
-            refreshButton.translatesAutoresizingMaskIntoConstraints = NO;
-            refreshButton.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
-            refreshButton.layer.cornerRadius = 14;
-            refreshButton.layer.masksToBounds = NO;
-            refreshButton.layer.borderWidth = 0.5;
-            refreshButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
-            refreshButton.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.12].CGColor;
-            refreshButton.layer.shadowOffset = CGSizeMake(0, 2);
-            refreshButton.layer.shadowRadius = 4;
-            refreshButton.layer.shadowOpacity = 1.0;
-            refreshButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightMedium];
-            [refreshButton setTitle:@"↻" forState:UIControlStateNormal];
-            [refreshButton setTitleColor:[UIColor colorWithRed:0.3 green:0.35 blue:0.42 alpha:1.0] forState:UIControlStateNormal];
-            [refreshButton addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
-            [refreshButton addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
-            [refreshButton addTarget:self action:@selector(refreshCandidateTap:) forControlEvents:UIControlEventTouchUpInside];
+            [btn addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
+            [btn addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+            [btn addTarget:self action:@selector(playerBtnTap:) forControlEvents:UIControlEventTouchUpInside];
 
-            UILongPressGestureRecognizer *refreshLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleRefreshLongPress:)];
-            refreshLongPress.minimumPressDuration = 0.8;
-            [refreshButton addGestureRecognizer:refreshLongPress];
-
-            [stack addArrangedSubview:refreshButton];
-
-            [NSLayoutConstraint activateConstraints:@[
-                [refreshButton.widthAnchor constraintEqualToConstant:refreshD],
-                [refreshButton.heightAnchor constraintEqualToConstant:refreshD],
-
-                [stack.topAnchor constraintEqualToAnchor:container.topAnchor],
-                [stack.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],
-                [stack.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
-                [stack.trailingAnchor constraintEqualToAnchor:container.trailingAnchor]
-            ]];
-
-            [rootVC.view addSubview:container];
-
-            CGFloat ratio = [self loadPositionRatio];
-            self.centerYConstraint = [container.centerYAnchor constraintEqualToAnchor:rootVC.view.centerYAnchor constant:(ratio - 0.5) * [UIScreen mainScreen].bounds.size.height];
-
-            [NSLayoutConstraint activateConstraints:@[
-                [container.widthAnchor constraintEqualToConstant:btnW],
-                [container.heightAnchor constraintEqualToConstant:totalH],
-                [container.trailingAnchor constraintEqualToAnchor:rootVC.view.safeAreaLayoutGuide.trailingAnchor constant:-12],
-                self.centerYConstraint
-            ]];
-
-            self.refreshButton = refreshButton;
-            self.buttonsContainer = container;
-            self.overlayWindow.buttonsContainer = container;
-            self.overlayWindow.hidden = NO;
+            [container addSubview:btn];
         }
-    });
+
+        UIButton *refreshButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        refreshButton.frame = CGRectMake((btnW - refreshD) / 2.0, btnH * 4 + spacing * 4, refreshD, refreshD);
+        refreshButton.backgroundColor = [UIColor colorWithRed:0.96 green:0.96 blue:0.98 alpha:0.94];
+        refreshButton.layer.cornerRadius = 14;
+        refreshButton.layer.masksToBounds = NO;
+        refreshButton.layer.borderWidth = 0.5;
+        refreshButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
+        refreshButton.layer.shadowColor = [UIColor colorWithWhite:0.0 alpha:0.12].CGColor;
+        refreshButton.layer.shadowOffset = CGSizeMake(0, 2);
+        refreshButton.layer.shadowRadius = 4;
+        refreshButton.layer.shadowOpacity = 1.0;
+        refreshButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightMedium];
+        [refreshButton setTitle:@"↻" forState:UIControlStateNormal];
+        [refreshButton setTitleColor:[UIColor colorWithRed:0.3 green:0.35 blue:0.42 alpha:1.0] forState:UIControlStateNormal];
+        [refreshButton addTarget:self action:@selector(btnTouchDown:) forControlEvents:UIControlEventTouchDown];
+        [refreshButton addTarget:self action:@selector(btnTouchUp:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+        [refreshButton addTarget:self action:@selector(refreshCandidateTap:) forControlEvents:UIControlEventTouchUpInside];
+
+        UILongPressGestureRecognizer *refreshLongPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleRefreshLongPress:)];
+        refreshLongPress.minimumPressDuration = 0.8;
+        [refreshButton addGestureRecognizer:refreshLongPress];
+
+        [container addSubview:refreshButton];
+        self.refreshButton = refreshButton;
+        self.buttonsContainer = container;
+    }
+
+    if (self.buttonsContainer.superview != playerView) {
+        [self.buttonsContainer removeFromSuperview];
+        [playerView addSubview:self.buttonsContainer];
+    }
+
+    CGFloat ratio = [self loadPositionRatio];
+    CGFloat pW = playerView.bounds.size.width;
+    CGFloat pH = playerView.bounds.size.height;
+    CGFloat safeY = MIN(MAX(ratio * pH - totalH / 2.0, 20), pH - totalH - 20);
+
+    CGRect f = CGRectMake(pW - btnW - 14, safeY, btnW, totalH);
+    self.buttonsContainer.frame = f;
+    [playerView bringSubviewToFront:self.buttonsContainer];
 }
 
 - (void)btnTouchDown:(UIButton *)btn {
@@ -808,6 +746,16 @@
         return;
     }
 
+    UIView *playerView = [self findActivePlayerView];
+    if (playerView && container.superview != playerView) {
+        [container removeFromSuperview];
+        [playerView addSubview:container];
+    }
+
+    if (container.superview) {
+        [container.superview bringSubviewToFront:container];
+    }
+
     if (container.hidden || container.alpha < 0.05) {
         container.hidden = NO;
         container.transform = CGAffineTransformMakeTranslation(40, 0);
@@ -835,23 +783,27 @@
 - (void)onPanContainer:(UIPanGestureRecognizer *)pan {
     UIView *container = self.buttonsContainer;
     UIView *superView = container.superview;
-    if (!superView || !self.centerYConstraint) {
+    if (!superView) {
         return;
     }
 
     CGPoint translation = [pan translationInView:superView];
-    CGFloat newConstant = self.centerYConstraint.constant + translation.y;
-    CGFloat halfH = superView.bounds.size.height / 2.0;
-    CGFloat containerH = container.bounds.size.height;
-    CGFloat maxOffset = halfH - containerH / 2.0 - 40;
-
-    newConstant = MIN(MAX(newConstant, -maxOffset), maxOffset);
-    self.centerYConstraint.constant = newConstant;
+    CGPoint center = container.center;
+    center.y += translation.y;
+    container.center = center;
     [pan setTranslation:CGPointMake(0.0, 0.0) inView:superView];
 
     if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
-        CGFloat ratio = (newConstant + halfH) / superView.bounds.size.height;
-        [self savePositionRatio:ratio];
+        CGFloat screenH = superView.bounds.size.height;
+        CGFloat h = container.bounds.size.height;
+        CGFloat safeY = MIN(MAX(center.y, 20 + h / 2.0), screenH - 20 - h / 2.0);
+
+        [UIView animateWithDuration:0.2 animations:^{
+            container.center = CGPointMake(center.x, safeY);
+        } completion:^(BOOL finished) {
+            CGFloat ratio = safeY / screenH;
+            [self savePositionRatio:ratio];
+        }];
     }
 }
 
